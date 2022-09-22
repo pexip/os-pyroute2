@@ -1,0 +1,32 @@
+#!/usr/bin/make -f
+
+UPSTREAM_GIT := https://github.com/svinota/pyroute2
+include /usr/share/openstack-pkg-tools/pkgos.make
+
+export PYBUILD_NAME=pyroute2
+export python=python3
+
+%:
+	dh $@ --with python3,sphinxdoc --buildsystem=pybuild
+
+override_dh_auto_test:
+ifeq (,$(findstring nocheck, $(DEB_BUILD_OPTIONS)))
+	echo "No tests for now..."
+#	ip -json link >$(CURDIR)/tests/test_unit/test_iproute_match/links.dump
+#	set -e ; set -x ; for pyvers in $(PYTHON3S) ; do \
+#		python$$pyvers -m pytest tests/test_unit -v ; \
+#	done
+endif
+
+override_dh_auto_build:
+	echo $$OSLO_PACKAGE_VERSION > VERSION
+	dh_auto_build
+
+override_dh_installchangelogs:
+	dh_installchangelogs CHANGELOG.rst
+
+override_dh_sphinxdoc:
+ifeq (,$(findstring nodoc, $(DEB_BUILD_OPTIONS)))
+	PYTHONPATH=$(CURDIR)/debian/test-installs/usr/lib/python3/dist-packages python3 -m sphinx -b html docs $(CURDIR)/debian/python-pyroute2-doc/usr/share/doc/python-pyroute2-doc/html
+	dh_sphinxdoc
+endif

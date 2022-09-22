@@ -1,0 +1,16 @@
+Description: Fix path to links.dump.
+Author: Thomas Goirand <zigo@debian.org>
+Forwarded: no
+Last-Update: 2022-08-31
+
+--- pyroute2-0.7.2.orig/tests/test_unit/test_iproute_match/test_match.py
++++ pyroute2-0.7.2/tests/test_unit/test_iproute_match/test_match.py
+@@ -7,7 +7,7 @@ from pyroute2.netlink.rtnl.ifinfmsg impo
+ from pyroute2.requests.link import LinkFieldFilter, LinkIPRouteFilter
+ from pyroute2.requests.main import RequestProcessor
+ 
+-with open('test_unit/test_iproute_match/links.dump', 'r') as f:
++with open('tests/test_unit/test_iproute_match/links.dump', 'r') as f:
+     ifinfmsg_sample = [ifinfmsg().load(x) for x in json.load(f)]
+ for msg in ifinfmsg_sample:
+     msg.reset()

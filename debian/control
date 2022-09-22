@@ -1,0 +1,90 @@
+Source: pyroute2
+Section: python
+Priority: optional
+Maintainer: Debian OpenStack <team+openstack@tracker.debian.org>
+Uploaders:
+ Thomas Goirand <zigo@debian.org>,
+ Florian Pelgrim <florian.pelgrim@craneworks.de>,
+Build-Depends:
+ debhelper-compat (= 12),
+ dh-python,
+ openstack-pkg-tools,
+ pybuild-plugin-pyproject,
+ python3-all,
+ python3-poetry-core,
+ python3-setuptools,
+Build-Depends-Indep:
+ iproute2,
+ python3-aafigure,
+ python3-bottle,
+ python3-coverage,
+ python3-eventlet,
+ python3-mitogen,
+ python3-netaddr,
+ python3-nox,
+ python3-psutil,
+ python3-psycopg2,
+ python3-pytest,
+ python3-pytest-cov,
+ python3-sphinx,
+Standards-Version: 4.5.0
+VCS-Browser: https://salsa.debian.org/third-party/pyroute2
+VCS-Git: https://salsa.debian.org/third-party/pyroute2.git
+Homepage: https://github.com/svinota/pyroute2
+
+Package: python-pyroute2-doc
+Architecture: all
+Section: doc
+Depends:
+ ${misc:Depends},
+ ${sphinxdoc:Depends},
+Description: netlink and Linux network configuration library (documentation)
+ Pyroute2 is a pure Python netlink and Linux network configuration
+ library. It requires only Python stdlib, no 3rd party libraries.
+ .
+ This package contains the Python module documentation.
+
+Package: python3-pyroute2
+Architecture: all
+Breaks:
+ python3-pyroute2-minimal,
+ python3-pyroute2.core,
+ python3-pyroute2.ethtool,
+ python3-pyroute2.ipdb,
+ python3-pyroute2.ipset,
+ python3-pyroute2.ndb,
+ python3-pyroute2.nftables,
+ python3-pyroute2.nslink,
+ python3-pyroute2.protocols,
+Replaces:
+ python3-pyroute2-minimal,
+ python3-pyroute2.core,
+ python3-pyroute2.ethtool,
+ python3-pyroute2.ipdb,
+ python3-pyroute2.ipset,
+ python3-pyroute2.ndb,
+ python3-pyroute2.nftables,
+ python3-pyroute2.nslink,
+ python3-pyroute2.protocols,
+Provides:
+ python3-pyroute2-minimal,
+ python3-pyroute2.core,
+ python3-pyroute2.ethtool,
+ python3-pyroute2.ipdb,
+ python3-pyroute2.ipset,
+ python3-pyroute2.ndb,
+ python3-pyroute2.nftables,
+ python3-pyroute2.nslink,
+ python3-pyroute2.protocols,
+Depends:
+ python3-psutil,
+ ${misc:Depends},
+ ${python3:Depends},
+Description: Python3 Netlink library - full package
+ Pyroute2 is a pure Python netlink and Linux network configuration
+ library. It requires only Python stdlib, no 3rd party libraries.
+ Later it can change, but the deps tree will remain as simple, as
+ it is possible.
+ .
+ This package depends on all packages making Pyroute 2. install this
+ if you want the full distribution of Pyroute 2.

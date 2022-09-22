@@ -1,0 +1,207 @@
+pyroute2 (0.7.2-2) unstable; urgency=medium
+
+  * Uploading to unstable.
+
+ -- Thomas Goirand <zigo@debian.org>  Thu, 22 Sep 2022 16:46:52 +0200
+
+pyroute2 (0.7.2-1) experimental; urgency=medium
+
+  * New upstream release.
+  * Upstream is back to a single package: Debian has to follow. Remove all
+    separate binaries, add breaks+replaces+provides, and fix d/rules.
+  * Run tests using nox, remove b-d on nose (Closes: #1018451).
+  * Removed fix-upstream-way-to-find-version.patch and replaced it with a hack
+    in d/rules.
+  * Switch to pybuild and poetry packaging.
+  * Add fix-path-to-links.dump.patch.
+  * Package CHANGELOG.rst not CHANGELOG.md.
+
+ -- Thomas Goirand <zigo@debian.org>  Wed, 31 Aug 2022 11:32:52 +0200
+
+pyroute2 (0.6.7-3) unstable; urgency=medium
+
+  * Uploading to unstable.
+
+ -- Thomas Goirand <zigo@debian.org>  Wed, 23 Mar 2022 16:01:24 +0100
+
+pyroute2 (0.6.7-2) experimental; urgency=medium
+
+  * Add (= ${binary:Version}) in inter-dependencies of resulting binaries.
+
+ -- Thomas Goirand <zigo@debian.org>  Fri, 11 Mar 2022 00:20:52 +0100
+
+pyroute2 (0.6.7-1) experimental; urgency=medium
+
+  * New upstream release.
+
+ -- Thomas Goirand <zigo@debian.org>  Thu, 10 Mar 2022 16:01:48 +0100
+
+pyroute2 (0.6.6-1) experimental; urgency=medium
+
+  * New upstream release.
+  * Removed fix-conf.py-for-sphinx-4.patch applied upstream.
+
+ -- Thomas Goirand <zigo@debian.org>  Mon, 21 Feb 2022 09:22:08 +0100
+
+pyroute2 (0.6.4-3) unstable; urgency=medium
+
+  * Uploading to unstable.
+
+ -- Thomas Goirand <zigo@debian.org>  Wed, 29 Sep 2021 13:56:40 +0200
+
+pyroute2 (0.6.4-2) experimental; urgency=medium
+
+  * python3-pyroute2.{core,ndb}: add missing Breaks+Replaces: python3-pyroute2
+    (<< 0.6) (Closes: #995114).
+  * Add fix-conf.py-for-sphinx-4.patch.
+
+ -- Thomas Goirand <zigo@debian.org>  Tue, 28 Sep 2021 17:04:23 +0200
+
+pyroute2 (0.6.4-1) experimental; urgency=medium
+
+  * New upstream release.
+  * Switch the package to the OpenStack team, and switch the packaging to a
+    Git tag based workflow.
+  * Build the sphinx doc from source using dh_sphinxdoc override.
+  * Remove patch remove-google-annalytics-from-docs.patch.
+  * Build-depends on python3-pytest.
+  * Get away from pybuild, because it's not adapted to the new type of
+    upstream packaging.
+  * Fix upstream code to find out package version.
+
+ -- Thomas Goirand <zigo@debian.org>  Thu, 16 Sep 2021 09:07:36 +0200
+
+pyroute2 (0.5.14-2) unstable; urgency=medium
+
+  * Uploading to unstable.
+
+ -- Thomas Goirand <zigo@debian.org>  Tue, 13 Oct 2020 14:31:06 +0200
+
+pyroute2 (0.5.14-1) experimental; urgency=low
+
+  [ Debian Janitor ]
+  * Bump debhelper from old 11 to 12.
+  * Set upstream metadata fields: Bug-Database, Bug-Submit, Repository,
+    Repository-Browse.
+
+  [ Ondřej Nový ]
+  * d/control: Update Maintainer field with new Debian Python Team
+    contact address.
+
+  [ Thomas Goirand ]
+  * New upstream release.
+  * Fixed VCS URL to the new Python team "packages" subgroup.
+  * Standards-Version: 4.5.0.
+  * Added python3-setuptools as build-depends.
+  * Add remove-google-annalytics-from-docs.patch.
+
+ -- Thomas Goirand <zigo@debian.org>  Tue, 29 Sep 2020 09:23:18 +0200
+
+pyroute2 (0.5.7-1) unstable; urgency=medium
+
+  * New upstream release.
+  * Uploading to unstable.
+  * Remove Google Analytics patch, not needed anymore.
+
+ -- Thomas Goirand <zigo@debian.org>  Wed, 30 Oct 2019 11:41:27 +0100
+
+pyroute2 (0.5.6-1) experimental; urgency=medium
+
+  * New upstream release.
+  * Rebased remove-Google-Analytics-from-docs.patch.
+
+ -- Thomas Goirand <zigo@debian.org>  Wed, 25 Sep 2019 23:02:44 +0200
+
+pyroute2 (0.5.4-2) unstable; urgency=medium
+
+  [ Ondřej Nový ]
+  * Use debhelper-compat instead of debian/compat.
+
+  [ Thomas Goirand ]
+  * Removed Python 2 support (Closes: #937529).
+    - This also fixes /usr/bin/ss2 shipped in both Python 2 and Python 3
+      versions of this package. Adding Breaks+Replaces to make sure upgrades
+      are smooth (Closes: #932882).
+  * Add remove-Google-Analytics-from-docs.patch.
+  * Move the package to the DPMT:
+    - Change the Maintainer field.
+    - Fix VCS fields.
+    - Add myself and Florian Pelgrim as uploaders.
+  * Fixed debian/python-pyroute2-doc.links which were adding symlinks in the
+    wrong folder.
+  * Fixed debian/python-pyroute2-doc.doc-base which was also poiting to the
+    wrong folder.
+  * Added missing runtime depends: python3-psutil.
+  * Fixed debian/copyright missing many licenses.
+
+ -- Thomas Goirand <zigo@debian.org>  Thu, 15 Aug 2019 15:02:27 +0200
+
+pyroute2 (0.5.4-1) unstable; urgency=medium
+
+  * Non-maintainer upload (because of no reply in the BTS after 3 months).
+  * New upstream release. (Closes: #926141)
+
+ -- Thomas Goirand <zigo@debian.org>  Fri, 19 Jul 2019 00:12:14 +0200
+
+pyroute2 (0.5.2-1) unstable; urgency=medium
+
+  [ Michal Arbet ]
+  * New upstream version (Closes: #903394)
+  * Add nose tests
+  * Use Debian package jQuery
+  * Fix build-depends-on-python-sphinx-only
+  * Adding d/source.lintian-overrides
+
+  [ Florian Pelgrim ]
+  * Changed copyright format uri to https
+  * Removed trailing spaces from d/control and d/changelog
+  * Increased debhelper compat to 11
+  * Update lintian override location to d/source/lintian-overrides
+
+ -- Florian Pelgrim <florian.pelgrim@craneworks.de>  Tue, 10 Jul 2018 21:32:31 +0000
+
+pyroute2 (0.4.12-2) unstable; urgency=medium
+
+  * Adding docs package (Thanks to Federico Ceratto)
+    For now we only ship pre-build documentation
+
+ -- Florian Pelgrim <florian.pelgrim@craneworks.de>  Sat, 28 Jan 2017 20:09:34 +0100
+
+pyroute2 (0.4.12-1) unstable; urgency=medium
+
+  * Bumping to version 0.4.12 (Closes: #830114)
+  * Bumping standards-version to 3.9.8
+  * Update Build-Depends and Build-Depends-Indep (Thanks to Federico Ceratto)
+  * Adding 'Provides' and 'Recommends' to package (Thanks to Federico Ceratto)
+  * Bumping debhelper to version 10
+  * Update copyright information
+  * Adding README.md and examples/* to package (Thanks to Federico Ceratto)
+
+ -- Florian Pelgrim <florian.pelgrim@craneworks.de>  Sat, 28 Jan 2017 18:06:26 +0100
+
+pyroute2 (0.3.16-1) unstable; urgency=medium
+
+  * Bumping to version 0.3.16 (Closes: #797778)
+  * Bumping standards-version to 3.9.7
+  * https for pypi.debian.net
+  * Ignore build process files
+
+ -- Florian Pelgrim <florian.pelgrim@craneworks.de>  Sun, 27 Mar 2016 23:31:30 +0200
+
+pyroute2 (0.3.5-2) unstable; urgency=medium
+
+  * Fixing debian/watch file for uscan
+
+ -- Florian Pelgrim <florian.pelgrim@craneworks.de>  Fri, 27 Mar 2015 10:45:38 -0500
+
+pyroute2 (0.3.5-1) unstable; urgency=medium
+
+  * Update package to 0.3.5
+
+ -- Florian Pelgrim <florian.pelgrim@craneworks.de>  Thu, 26 Mar 2015 08:33:10 -0500
+
+pyroute2 (0.3.3-1) unstable; urgency=low
+
+  * Initial packaging Closes: #772572
+
+ -- Florian Pelgrim <florian.pelgrim@craneworks.de>  Fri, 02 Jan 2015 08:57:35 -0600
