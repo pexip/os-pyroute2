@@ -26,6 +26,7 @@ Usage
     ipset
     netns
     wireguard
+    event
 
 Howtos
 ------
@@ -53,6 +54,7 @@ Development
 
     devcontribute
     arch
+    parser
     netlink
     nlsocket
 

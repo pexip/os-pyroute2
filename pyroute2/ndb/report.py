@@ -1,31 +1,34 @@
 '''
 .. note:: New in verision 0.5.11
 
-Filtering examples::
+.. testsetup::
 
-    # 1. get all the routes
-    # 2. join with interfaces on route.oif == interface.index
-    # 3. select only fields dst, gateway, ifname and mac address
-    # 4. transform the mac address into xxxx.xxxx.xxxx notation
-    # 5. dump the info in the CSV format
+    from pyroute2 import NDB
+    ndb = NDB(sources=[{'target': 'localhost', 'kind': 'IPMock'}])
 
-    (ndb
-     .routes
-     .dump()
-     .join(ndb.interfaces.dump(),
-           condition=lambda l, r: l.oif == r.index)
-     .select('dst', 'gateway', 'oif', 'ifname', 'address')
-     .transform(address=lambda x: '%s%s.%s%s.%s%s' % tuple(x.split(':')))
-     .format('csv'))
+.. testcleanup:: *
 
-    'dst','gateway','oif','ifname','address'
-    '172.16.20.0','127.0.0.2',1,'lo','0000.0000.0000'
-    '172.16.22.0','127.0.0.4',1,'lo','0000.0000.0000'
-    '','172.16.254.3',3,'wlp58s0','60f2.6289.400e'
-    '10.250.3.0',,39,'lxcbr0','0016.3e00.0000'
-    '10.255.145.0','10.255.152.254',42881,'prdc51e6d5','4a6a.60b1.8448'
-    ...
+    for key, value in tuple(globals().items()):
+        if key.startswith('ndb') and hasattr(value, 'close'):
+            value.close()
 
+Filtering example:
+
+.. testcode::
+
+    report = ndb.interfaces.dump()
+    report.select_fields('index', 'ifname', 'address', 'state')
+    report.transform_fields(
+        address=lambda r: '%s%s.%s%s.%s%s' % tuple(r.address.split(':'))
+    )
+    for record in report.format('csv'):
+        print(record)
+
+.. testoutput::
+
+    'index','ifname','address','state'
+    1,'lo','0000.0000.0000','up'
+    2,'eth0','5254.0072.58b2','up'
 
 '''
 import json
@@ -36,9 +39,14 @@ from pyroute2 import cli
 
 MAX_REPORT_LINES = 10000
 
+deprecation_notice = '''
+RecordSet API is deprecated, pls refer to:
+
+https://docs.pyroute2.org/ndb_reports.html
+'''
+
 
 def format_json(dump, headless=False):
-
     buf = []
     fnames = None
     yield '['
@@ -89,10 +97,10 @@ def format_csv(dump, headless=False):
 
 class Record:
     def __init__(self, names, values, ref_class=None):
-        if len(names) != len(values):
-            raise ValueError('names and values must have the same length')
         self._names = tuple(names)
         self._values = tuple(values)
+        if len(self._names) != len(self._values):
+            raise ValueError('names and values must have the same length')
         self._ref_class = ref_class
 
     def __getitem__(self, key):
@@ -125,6 +133,25 @@ class Record:
     def __len__(self):
         return len(self._values)
 
+    def _select_fields(self, *fields):
+        return Record(fields, map(lambda x: self[x], fields), self._ref_class)
+
+    def _transform_fields(self, **spec):
+        data = self._as_dict()
+        for key, func in spec.items():
+            data[key] = func(self)
+        return Record(data.keys(), data.values(), self._ref_class)
+
+    def _match(self, f=None, **spec):
+        if callable(f):
+            return f(self)
+        for key, value in spec.items():
+            if not (
+                value(self[key]) if callable(value) else (self[key] == value)
+            ):
+                return False
+        return True
+
     def _as_dict(self):
         ret = {}
         for key, value in zip(self._names, self._values):
@@ -150,18 +177,26 @@ class Record:
 
 
 class BaseRecordSet(object):
-    def __init__(self, generator, ellipsis=True):
+    def __init__(self, generator, ellipsis='(...)'):
         self.generator = generator
         self.ellipsis = ellipsis
-        self.cached = []
 
     def __iter__(self):
-        return self.generator
+        return self
+
+    def __next__(self):
+        return next(self.generator)
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc_value, traceback):
+        pass
 
     def __repr__(self):
         counter = 0
         ret = []
-        for record in self.generator:
+        for record in self:
             if isinstance(record, str):
                 ret.append(record)
             else:
@@ -169,7 +204,7 @@ class BaseRecordSet(object):
             ret.append('\n')
             counter += 1
             if self.ellipsis and counter > MAX_REPORT_LINES:
-                ret.append('(...)')
+                ret.append(self.ellipsis)
                 break
         if ret:
             ret.pop()
@@ -186,27 +221,84 @@ class RecordSet(BaseRecordSet):
     to make chains of filters.
     '''
 
+    def __init__(self, generator, ellipsis=True):
+        super().__init__(generator, ellipsis)
+        self.filters = []
+
+    def __next__(self):
+        while True:
+            record = next(self.generator)
+            for f in self.filters:
+                record = f(record)
+                if record is None:
+                    break
+            else:
+                return record
+
+    def select_fields(self, *fields):
+        '''
+        Select only chosen fields for every record:
+
+        .. testcode::
+
+            report = ndb.interfaces.dump()
+            report.select_fields('index', 'ifname')
+            for line in report.format('csv'):
+                print(line)
+
+        .. testoutput::
+
+            'index','ifname'
+            1,'lo'
+            2,'eth0'
+        '''
+        self.filters.append(lambda x: x._select_fields(*fields))
+
+    def select_records(self, f=None, **spec):
+        '''
+        Select records based on a function f() or a spec match. A spec
+        is dictionary of pairs `field: constant` or `field: callable`:
+
+        .. testcode::
+
+            report = ndb.addresses.summary()
+            report.select_records(ifname=lambda x: x.startswith('eth'))
+            for line in report.format('csv'):
+                print(line)
+
+        .. testoutput::
+
+            'target','tflags','ifname','address','prefixlen'
+            'localhost',0,'eth0','192.168.122.28',24
+        '''
+        self.filters.append(lambda x: x if x._match(f, **spec) else None)
+
+    def transform_fields(self, **kwarg):
+        '''
+        Transform fields with a function. Function must accept
+        the record as the only argument:
+
+        .. testcode::
+
+            report = ndb.addresses.summary()
+            report.transform_fields(
+                address=lambda r: f'{r.address}/{r.prefixlen}'
+            )
+            report.select_fields('ifname', 'address')
+            for line in report.format('csv'):
+                print(line)
+
+        .. testoutput::
+
+            'ifname','address'
+            'lo','127.0.0.1/8'
+            'eth0','192.168.122.28/24'
+        '''
+        self.filters.append(lambda x: x._transform_fields(**kwarg))
+
     @cli.show_result
     def transform(self, **kwarg):
-        '''
-        Transform record fields with a provided functions::
-
-            view.transform(field_name_1=func1,
-                           field_name_2=func2)
-
-        Examples, transform MAC addresses into dots-format and IEEE 802::
-
-            fmt = '%s%s.%s%s.%s%s'
-            (ndb
-             .interfaces
-             .summary()
-             .transform(address=lambda x: fmt % tuple(x.split(':')))
-
-            (ndb
-             .interfaces
-             .summary()
-             .transform(address=lambda x: x.replace(':', '-').upper()))
-        '''
+        warnings.warn(deprecation_notice, DeprecationWarning)
 
         def g():
             for record in self.generator:
@@ -224,24 +316,7 @@ class RecordSet(BaseRecordSet):
 
     @cli.show_result
     def filter(self, f=None, **kwarg):
-        '''
-        Filter records. This function may be called in two ways. One way
-        is a simple match. Select ports of `br0` only in the `up` state::
-
-            (ndb
-             .interfaces
-             .dump()
-             .filter(master=ndb.interfaces['br0']['index'],
-                     state='up'))
-
-        When a simple match is not a solution, one can provide a matching
-        function. Select only MPLS lwtunnel routes::
-
-            (ndb
-             .routes
-             .dump()
-             .filter(lambda x: x.encap_type == 1 and x.encap is not None))
-        '''
+        warnings.warn(deprecation_notice, DeprecationWarning)
 
         def g():
             for record in self.generator:
@@ -259,61 +334,27 @@ class RecordSet(BaseRecordSet):
 
     @cli.show_result
     def select(self, *argv):
-        warnings.warn(
-            'RecordSet.select is renamed to .fields', DeprecationWarning
-        )
+        warnings.warn(deprecation_notice, DeprecationWarning)
         return self.fields(*argv)
 
     @cli.show_result
-    def fields(self, *argv):
-        '''
-        Show selected fields from records::
-
-            ndb.interfaces.dump().fields('index', 'ifname', 'state')
-        '''
+    def fields(self, *fields):
+        warnings.warn(deprecation_notice, DeprecationWarning)
 
         def g():
             for record in self.generator:
-                ret = []
-                for field in argv:
-                    ret.append(getattr(record, field, None))
-                yield Record(argv, ret, record._ref_class)
+                yield record._select_fields(*fields)
 
         return RecordSet(g())
 
     @cli.show_result
     def join(self, right, condition=lambda r1, r2: True, prefix=''):
-        '''
-        Join two reports.
-
-            * right -- a report to join with
-            * condition -- filter records with a function
-            * prefix -- rename the "right" fields using the prefix
-
-        The condition function must have two arguments, left record and
-        right record, and must return True or False. The routine discards
-        joined records when the condition is False.
-
-        Example, provide interface names for routes, don't change field
-        names::
-
-            (ndb
-             .routes
-             .dump()
-             .join(ndb.interfaces.dump(),
-                   condition=lambda l, r: l.oif == r.index)
-             .select('dst', 'gateway', 'ifname'))
-
-        **Warning**: this method loads the whole data of the `right` report
-        into the memory.
-
-        '''
+        warnings.warn(deprecation_notice, DeprecationWarning)
         # fetch all the records from the right
         # ACHTUNG it may consume a lot of memory
         right = tuple(right)
 
         def g():
-
             for r1 in self.generator:
                 for r2 in right:
                     if condition(r1, r2):
@@ -331,22 +372,14 @@ class RecordSet(BaseRecordSet):
     @cli.show_result
     def format(self, kind):
         '''
-        Convert report records into other formats. Supported formats are
-        'json' and 'csv'.
+        Return an iterator over text lines in the chosen format.
 
-        The resulting report can not use filters, transformations etc.
-        Thus, the `format()` call should be the last in the chain::
-
-            (ndb
-             .addresses
-             .summary()
-             .format('csv'))
-
+        Supported formats: 'json', 'csv'.
         '''
         if kind == 'json':
-            return BaseRecordSet(format_json(self.generator, headless=True))
+            return BaseRecordSet(format_json(self, headless=True))
         elif kind == 'csv':
-            return BaseRecordSet(format_csv(self.generator, headless=True))
+            return BaseRecordSet(format_csv(self, headless=True))
         else:
             raise ValueError()
 
@@ -354,57 +387,12 @@ class RecordSet(BaseRecordSet):
         '''
         Return number of records.
 
-        This method is destructive, as it exhausts the generator.
+        The method exhausts the generator.
         '''
         counter = 0
-        for record in self.generator:
+        for record in self:
             counter += 1
         return counter
 
     def __getitem__(self, key):
-        if isinstance(key, int):
-            if key >= 0:
-                # positive indices
-                for x in range(key):
-                    try:
-                        next(self.generator)
-                    except StopIteration:
-                        raise IndexError('index out of range')
-                try:
-                    return next(self.generator)
-                except StopIteration:
-                    raise IndexError('index out of range')
-            else:
-                # negative indices
-                buf = []
-                for i in self.generator:
-                    buf.append(i)
-                    if len(buf) > abs(key):
-                        buf.pop(0)
-                if len(buf) < abs(key):
-                    raise IndexError('index out of range')
-                return buf[0]
-        elif isinstance(key, slice):
-            count = 0
-            buf = []
-            start = key.start or 0
-            stop = key.stop
-
-            for i in self.generator:
-                buf.append(i)
-                if (start >= 0 and count < start) or (
-                    start < 0 and len(buf) > abs(start)
-                ):
-                    buf.pop(0)
-                count += 1
-                if stop is not None and stop > 0 and count == stop:
-                    if start < 0:
-                        buf.pop(0)
-                    break
-
-            if stop is not None and stop < 0:
-                buf = buf[:stop]
-
-            return buf[:: key.step]
-        else:
-            raise TypeError('illegal key format')
+        return list(self)[key]

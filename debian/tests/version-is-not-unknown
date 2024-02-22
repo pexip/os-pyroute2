@@ -1,0 +1,9 @@
+#!/usr/bin/python3
+
+from pyroute2 import __version__
+from sys import exit
+
+print(f"pyroute2.__version__ is '{__version__}'")
+
+if __version__ == "unknown":
+    exit(1)

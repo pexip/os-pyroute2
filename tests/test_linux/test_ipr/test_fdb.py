@@ -25,7 +25,7 @@ def test_fdb_vxlan(context):
         )
     )
     # dump
-    r = context.ipr.fdb('dump', ifindex=vxlan_idx, lladdr=l2)
+    r = tuple(context.ipr.fdb('dump', ifindex=vxlan_idx, lladdr=l2))
     assert len(r) == 1
     assert r[0]['ifindex'] == vxlan_idx
     assert r[0].get_attr('NDA_LLADDR') == l2
@@ -35,7 +35,6 @@ def test_fdb_vxlan(context):
 
 
 def test_fdb_bridge_simple(context):
-
     ifname = context.new_ifname
     (
         context.ndb.interfaces.create(
@@ -47,14 +46,14 @@ def test_fdb_bridge_simple(context):
     l2 = '00:11:22:33:44:55'
     context.ipr.fdb('add', lladdr=l2, ifindex=idx)
     # dump FDB
-    r = context.ipr.fdb('dump', ifindex=idx, lladdr=l2)
+    r = tuple(context.ipr.fdb('dump', ifindex=idx, lladdr=l2))
     # one vlan == 1, one w/o vlan
     assert len(r) == 2
     assert len(list(filter(lambda x: x['ifindex'] == idx, r))) == 2
     assert len(list(filter(lambda x: x.get_attr('NDA_VLAN'), r))) == 1
     assert len(list(filter(lambda x: x.get_attr('NDA_MASTER') == idx, r))) == 2
     assert len(list(filter(lambda x: x.get_attr('NDA_LLADDR') == l2, r))) == 2
-    r = context.ipr.fdb('dump', ifindex=idx, lladdr=l2, vlan=1)
+    r = tuple(context.ipr.fdb('dump', ifindex=idx, lladdr=l2, vlan=1))
     assert len(r) == 1
     assert r[0].get_attr('NDA_VLAN') == 1
     assert r[0].get_attr('NDA_MASTER') == idx

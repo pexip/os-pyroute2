@@ -12,7 +12,6 @@ encap_types = {'mpls': 1, AF_MPLS: 1, 'seg6': 5, 'bpf': 6, 'seg6local': 7}
 
 
 class RouteFieldFilter(IPTargets, NLAKeyTransform):
-
     _nla_prefix = 'RTA_'
 
     def __init__(self, add_defaults=True):
@@ -224,6 +223,10 @@ class RouteIPRouteFilter(IPRouteFilter):
             #           'vrf_table': 10}
             #
             # 'encap': {'type': 'seg6local',
+            #           'action': 'End.DT46',
+            #           'vrf_table': 10}
+            #
+            # 'encap': {'type': 'seg6local',
             #           'action': 'End.DX6',
             #           'nh6': '2000::5'}
             #
@@ -386,6 +389,10 @@ class RouteIPRouteFilter(IPRouteFilter):
              'vrf_table': 10}
 
             {'type': 'seg6local',
+             'action': 'End.DT46',
+             'vrf_table': 10}
+
+            {'type': 'seg6local',
              'action': 'End.B6',
              'table': '10'
              'srh': {'segs': '2000::5,2000::6'}}
@@ -442,6 +449,9 @@ class RouteIPRouteFilter(IPRouteFilter):
                 # Retrieve table
                 table = header['table']
             elif action == 'End.DT4':
+                # Retrieve vrf_table
+                vrf_table = header['vrf_table']
+            elif action == 'End.DT46':
                 # Retrieve vrf_table
                 vrf_table = header['vrf_table']
             elif action == 'End.B6':

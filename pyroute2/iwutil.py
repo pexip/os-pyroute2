@@ -223,7 +223,8 @@ class IW(NL80211):
         '''
         # lookup the interface type
         iftype = IFTYPE_NAMES.get(iftype, iftype)
-        assert isinstance(iftype, int)
+        if not isinstance(iftype, int):
+            raise TypeError('iftype must be int')
 
         msg = nl80211cmd()
         msg['cmd'] = NL80211_NAMES['NL80211_CMD_NEW_INTERFACE']
@@ -372,7 +373,8 @@ class IW(NL80211):
         if channel_fixed:
             msg['attrs'].append(['NL80211_ATTR_FREQ_FIXED', None])
             width = CHAN_WIDTH.get(width, width)
-            assert isinstance(width, int)
+            if not isinstance(width, int):
+                raise TypeError('width must be int')
             if width in [2, 3, 5] and center:
                 msg['attrs'].append(['NL80211_ATTR_CHANNEL_WIDTH', width])
                 msg['attrs'].append(['NL80211_ATTR_CENTER_FREQ1', center])
@@ -405,7 +407,6 @@ class IW(NL80211):
         )
 
     def authenticate(self, ifindex, bssid, ssid, freq, auth_type=0):
-
         '''
         Send an Authentication management frame.
         '''
@@ -425,7 +426,6 @@ class IW(NL80211):
         )
 
     def deauthenticate(self, ifindex, bssid, reason_code=0x01):
-
         '''
         Send a Deauthentication management frame.
         '''
@@ -443,7 +443,6 @@ class IW(NL80211):
         )
 
     def associate(self, ifindex, bssid, ssid, freq, info_elements=None):
-
         '''
         Send an Association request frame.
         '''
@@ -465,7 +464,6 @@ class IW(NL80211):
         )
 
     def disassociate(self, ifindex, bssid, reason_code=0x03):
-
         '''
         Send a Disassociation management frame.
         '''
@@ -603,7 +601,6 @@ class IW(NL80211):
                     BSS_STATUS_NAMES['associated'],
                     BSS_STATUS_NAMES['ibss_joined'],
                 ):
-
                     return x
 
         return None

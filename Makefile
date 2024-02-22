@@ -5,6 +5,14 @@
 #
 python ?= $(shell util/find_python.sh)
 
+define nox
+	[ -d .venv ] || ${python} -m venv .venv
+	bash -c "source .venv/bin/activate; \
+		python -m pip install --upgrade pip; \
+		python -m pip install nox; \
+		nox $(1) -- '$(subst ",\",${noxconfig})'"
+endef
+
 .PHONY: all
 all:
 	@echo targets:
@@ -17,12 +25,20 @@ all:
 	@echo \* uninstall -- uninstall lib
 	@echo
 
+.PHONY: git-clean
+git-clean:
+	git clean -d -f -x
+	git remote prune origin
+	git branch --merged >/tmp/merged-branches && \
+		vi /tmp/merged-branches && xargs git branch -d </tmp/merged-branches
+
 .PHONY: clean
 clean:
-	@$(MAKE) -C lab clean
-	@$(MAKE) -C docs clean
 	@rm -f lab/*html
 	@rm -f lab/_static/conf.js
+	@rm -rf lab/_build
+	@rm -rf docs/html
+	@rm -rf docs/man
 	@rm -rf dist build MANIFEST
 	@rm -f docs-build.log
 	@rm -rf pyroute2.egg-info
@@ -36,19 +52,23 @@ VERSION:
 
 .PHONY: docs
 docs:
-	@nox -e docs
+	$(call nox,-e docs)
+
+.PHONY: lab
+lab:
+	$(call nox,-e lab)
 
 .PHONY: format
 format:
-	@nox -e linter
+	$(call nox,-e linter)
 
 .PHONY: test
 test:
-	@nox
+	$(call nox,)
 
 .PHONY: test-platform
 test-platform:
-	@nox -e test_platform
+	$(call nox,-e test_platform)
 
 .PHONY: upload
 upload: dist
@@ -60,20 +80,17 @@ setup:
 
 .PHONY: dist
 dist: setup
-	@nox -e build
+	$(call nox,-e build)
 
 .PHONY: dist-minimal
-dist-minimal:
-	mv -f setup.cfg setup.cfg.orig
-	cp setup.minimal.cfg setup.cfg
-	$(MAKE) dist
-	mv -f setup.cfg.orig setup.cfg
+dist-minimal: setup
+	$(call nox,-e build_minimal)
 
 .PHONY: install
-install:
+install: setup
 	$(MAKE) uninstall
 	$(MAKE) clean
-	$(MAKE) dist
+	$(call nox,-e build)
 	${python} -m pip install dist/pyroute2-*whl ${root}
 
 .PHONY: install-minimal
@@ -91,8 +108,4 @@ audit-imports:
 
 .PHONY: nox
 nox:
-	${python} -m venv .venv
-	bash -c "source .venv/bin/activate; \
-		python -m pip install --upgrade pip; \
-		python -m pip install nox; \
-		nox -e ${session}"
+	$(call nox,-e ${session})

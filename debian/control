@@ -13,6 +13,7 @@ Build-Depends:
  python3-all,
  python3-poetry-core,
  python3-setuptools,
+ python3-sphinx-code-include,
 Build-Depends-Indep:
  iproute2,
  python3-aafigure,
@@ -28,8 +29,8 @@ Build-Depends-Indep:
  python3-pytest-cov,
  python3-sphinx,
 Standards-Version: 4.5.0
-VCS-Browser: https://salsa.debian.org/third-party/pyroute2
-VCS-Git: https://salsa.debian.org/third-party/pyroute2.git
+VCS-Browser: https://salsa.debian.org/openstack-team/third-party/pyroute2
+VCS-Git: https://salsa.debian.org/openstack-team/third-party/pyroute2.git
 Homepage: https://github.com/svinota/pyroute2
 
 Package: python-pyroute2-doc
