@@ -1,8 +1,9 @@
 Source: pyroute2
 Section: python
 Priority: optional
-Maintainer: Debian OpenStack <team+openstack@tracker.debian.org>
-Uploaders:
+Maintainer: Pexip AS <packaging@pexip.com>
+XSBC-Pexip-Original-Maintainer: Debian OpenStack <team+openstack@tracker.debian.org>
+XSBC-Pexip-Original-Uploaders:
  Thomas Goirand <zigo@debian.org>,
  Florian Pelgrim <florian.pelgrim@craneworks.de>,
 Build-Depends:
@@ -31,6 +32,7 @@ Standards-Version: 4.5.0
 VCS-Browser: https://salsa.debian.org/third-party/pyroute2
 VCS-Git: https://salsa.debian.org/third-party/pyroute2.git
 Homepage: https://github.com/svinota/pyroute2
+XS-Pexip-Upstream: http://deb.debian.org/debian/ bookworm
 
 Package: python-pyroute2-doc
 Architecture: all
