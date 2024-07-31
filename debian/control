@@ -23,7 +23,6 @@ Build-Depends-Indep:
  python3-mitogen,
  python3-netaddr,
  python3-nox,
- python3-psutil,
  python3-psycopg2,
  python3-pytest,
  python3-pytest-cov,
@@ -79,7 +78,6 @@ Provides:
  python3-pyroute2.nslink,
  python3-pyroute2.protocols,
 Depends:
- python3-psutil,
  ${misc:Depends},
  ${python3:Depends},
 Description: Python3 Netlink library - full package
