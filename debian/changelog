@@ -1,3 +1,9 @@
+pyroute2 (0.7.2-2+pexip24u2) pexip; urgency=medium
+
+  * Patch out readline import
+
+ -- Mark Hymers <mark.hymers@pexip.com>  Wed, 07 Aug 2024 10:26:42 +0100
+
 pyroute2 (0.7.2-2+pexip24u1) pexip; urgency=medium
 
   * Prepare Pexip packaging

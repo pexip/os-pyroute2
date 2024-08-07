@@ -1,0 +1,24 @@
+Index: pyroute2/pyroute2/cli/console.py
+===================================================================
+--- pyroute2.orig/pyroute2/cli/console.py
++++ pyroute2/pyroute2/cli/console.py
+@@ -6,12 +6,14 @@ import sys
+ from pyroute2.cli.session import Session
+ from pyroute2.ndb.main import NDB
+ 
+-try:
+-    import readline
++# Pexip: Never use readline
++#try:
++#    import readline
++#
++#    HAS_READLINE = True
++#except ImportError:
+ 
+-    HAS_READLINE = True
+-except ImportError:
+-    HAS_READLINE = False
++HAS_READLINE = False
+ 
+ 
+ class Console(code.InteractiveConsole):
