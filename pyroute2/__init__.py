@@ -2,9 +2,6 @@
 #
 # This module contains all the public symbols from the library.
 #
-import importlib
-import struct
-import sys
 
 ##
 #
@@ -15,119 +12,102 @@ try:
 except ImportError:
     __version__ = 'unknown'
 
-##
-#
-# Windows platform specific: socket module monkey patching
-#
-# To use the library on Windows, run::
-#   pip install win-inet-pton
-#
-if sys.platform.startswith('win'):  # noqa: E402
-    import win_inet_pton  # noqa: F401
+from pyroute2 import loader
+from pyroute2.cli.console import Console
+from pyroute2.cli.server import Server
+from pyroute2.conntrack import Conntrack, ConntrackEntry
+from pyroute2.devlink import DL
+from pyroute2.ethtool.ethtool import Ethtool
+from pyroute2.ipdb.exceptions import (
+    CommitException,
+    CreateException,
+    DeprecationException,
+    PartialCommitException,
+)
+from pyroute2.ipdb.main import IPDB
+from pyroute2.iproute import ChaoticIPRoute, IPBatch, IPRoute, RawIPRoute
+from pyroute2.iproute.ipmock import IPRoute as IPMock
+from pyroute2.ipset import IPSet
+from pyroute2.iwutil import IW
+from pyroute2.ndb.main import NDB
+from pyroute2.ndb.noipdb import NoIPDB
+from pyroute2.netlink.connector.cn_proc import ProcEventSocket
+from pyroute2.netlink.devlink import DevlinkSocket
+from pyroute2.netlink.diag import DiagSocket, ss2
+from pyroute2.netlink.event.acpi_event import AcpiEventSocket
+from pyroute2.netlink.event.dquot import DQuotSocket
+from pyroute2.netlink.exceptions import (
+    ChaoticException,
+    NetlinkDecodeError,
+    NetlinkDumpInterrupted,
+    NetlinkError,
+)
+from pyroute2.netlink.generic import GenericNetlinkSocket
+from pyroute2.netlink.generic.l2tp import L2tp
+from pyroute2.netlink.generic.mptcp import MPTCP
+from pyroute2.netlink.generic.wireguard import WireGuard
+from pyroute2.netlink.ipq import IPQSocket
+from pyroute2.netlink.nfnetlink.nfctsocket import NFCTSocket
+from pyroute2.netlink.nfnetlink.nftsocket import NFTSocket
+from pyroute2.netlink.nl80211 import NL80211
+from pyroute2.netlink.rtnl.iprsocket import IPRSocket
+from pyroute2.netlink.taskstats import TaskStats
+from pyroute2.netlink.uevent import UeventSocket
+from pyroute2.nslink.nslink import NetNS
+from pyroute2.nslink.nspopen import NSPopen
+from pyroute2.remote import RemoteIPRoute
+from pyroute2.remote.transport import RemoteSocket
+from pyroute2.wiset import WiSet
 
-##
-##
-#
-#
-# Logging setup
-#
-# See the history:
-#  * https://github.com/svinota/pyroute2/issues/246
-#  * https://github.com/svinota/pyroute2/issues/255
-#  * https://github.com/svinota/pyroute2/issues/270
-#  * https://github.com/svinota/pyroute2/issues/573
-#  * https://github.com/svinota/pyroute2/issues/601
-#
-from pyroute2.config import entry_points_aliases, log
+modules = [
+    AcpiEventSocket,
+    ChaoticException,
+    ChaoticIPRoute,
+    CommitException,
+    Conntrack,
+    ConntrackEntry,
+    Console,
+    CreateException,
+    DeprecationException,
+    DevlinkSocket,
+    DiagSocket,
+    DL,
+    DQuotSocket,
+    Ethtool,
+    IPBatch,
+    IPDB,
+    IPMock,
+    IPQSocket,
+    IPRoute,
+    IPRSocket,
+    IPSet,
+    IW,
+    GenericNetlinkSocket,
+    L2tp,
+    MPTCP,
+    NDB,
+    NetlinkError,
+    NetlinkDecodeError,
+    NetlinkDumpInterrupted,
+    NetNS,
+    NFCTSocket,
+    NFTSocket,
+    NL80211,
+    NoIPDB,
+    NSPopen,
+    PartialCommitException,
+    ProcEventSocket,
+    RawIPRoute,
+    RemoteIPRoute,
+    RemoteSocket,
+    Server,
+    ss2,
+    TaskStats,
+    UeventSocket,
+    WireGuard,
+    WiSet,
+]
 
-#
-#
-try:
-    from importlib import metadata
-except ImportError:
-    import importlib_metadata as metadata
-
-
-try:
-    # probe, if the bytearray can be used in struct.unpack_from()
-    struct.unpack_from('I', bytearray((1, 0, 0, 0)), 0)
-except Exception:
-    if sys.version_info[0] < 3:
-        # monkeypatch for old Python versions
-        log.warning('patching struct.unpack_from()')
-
-        def wrapped(fmt, buf, offset=0):
-            return struct._u_f_orig(fmt, str(buf), offset)
-
-        struct._u_f_orig = struct.unpack_from
-        struct.unpack_from = wrapped
-    else:
-        raise
-
-
-# load entry_points
-modules = []
-namespace_inject = {}
-groups = metadata.entry_points()
-if hasattr(groups, 'select'):
-    pyroute2_group = groups.select(group='pyroute2')
-else:
-    pyroute2_group = groups.get('pyroute2', [])
-for entry_point in pyroute2_group:
-    loaded = entry_point.load()
-    modules.append(entry_point.name)
-    if len(entry_point.value.split(':')) == 1:
-        key = 'pyroute2.%s' % entry_point.name
-        namespace_inject[key] = loaded
-    else:
-        globals()[entry_point.name] = loaded
-
+loader.init()
 __all__ = []
 __all__.extend(modules)
-
-# alias exceptions
-for key, value in entry_points_aliases.items():
-    if key in sys.modules:
-        sys.modules[value] = sys.modules[key]
-
-
-class PyRoute2ModuleSpec(importlib.machinery.ModuleSpec):
-    def __init__(
-        self,
-        name,
-        loader,
-        *argv,
-        origin=None,
-        loader_state=None,
-        is_package=None
-    ):
-        self.name = name
-        self.loader = loader
-        self.origin = None
-        self.submodule_search_locations = None
-        self.loader_state = None
-        self.cached = None
-        self.has_location = False
-
-
-class PyRoute2ModuleFinder(importlib.abc.MetaPathFinder):
-    @staticmethod
-    def find_spec(fullname, path, target=None):
-        if target is not None:
-            return None
-        if fullname not in namespace_inject:
-            return None
-        return PyRoute2ModuleSpec(fullname, PyRoute2ModuleFinder)
-
-    @staticmethod
-    def create_module(spec):
-        if spec.name not in namespace_inject:
-            return None
-        return namespace_inject[spec.name]
-
-    @staticmethod
-    def exec_module(spec):
-        pass
-
-
-sys.meta_path.append(PyRoute2ModuleFinder())

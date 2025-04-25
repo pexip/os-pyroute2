@@ -12,6 +12,9 @@ from pyroute2.netlink import genlmsg, nla, nla_base
 from pyroute2.netlink.generic import GenericNetlinkSocket
 from pyroute2.netlink.nlsocket import Marshal
 
+# Define from uapi/linux/nl80211.h
+NL80211_GENL_NAME = "nl80211"
+
 # nl80211 commands
 
 NL80211_CMD_UNSPEC = 0
@@ -141,8 +144,17 @@ NL80211_BSS_ELEMENTS_SUPPORTED_RATES = 1
 NL80211_BSS_ELEMENTS_CHANNEL = 3
 NL80211_BSS_ELEMENTS_TIM = 5
 NL80211_BSS_ELEMENTS_RSN = 48
+NL80211_BSS_ELEMENTS_HT_OPERATION = 61
 NL80211_BSS_ELEMENTS_EXTENDED_RATE = 50
+NL80211_BSS_ELEMENTS_VHT_OPERATION = 192
 NL80211_BSS_ELEMENTS_VENDOR = 221
+
+BSS_HT_OPER_CHAN_WIDTH_20 = "20 Mhz"
+BSS_HT_OPER_CHAN_WIDTH_20_OR_40 = "20 or 40 MHz"
+BSS_VHT_OPER_CHAN_WIDTH_20_OR_40 = BSS_HT_OPER_CHAN_WIDTH_20_OR_40
+BSS_VHT_OPER_CHAN_WIDTH_80 = "80 MHz"
+BSS_VHT_OPER_CHAN_WIDTH_80P80 = "80+80 MHz"
+BSS_VHT_OPER_CHAN_WIDTH_160 = "160 MHz"
 
 BSS_MEMBERSHIP_SELECTOR_HT_PHY = 127
 BSS_MEMBERSHIP_SELECTOR_VHT_PHY = 126
@@ -216,6 +228,24 @@ NL80211_STA_FLAG_ASSOCIATED = 7
     'NL80211_STA_FLAG_', globals()
 )
 
+# Cipher suites
+WLAN_CIPHER_SUITE_USE_GROUP = 0x00FAC00
+WLAN_CIPHER_SUITE_WEP40 = 0x00FAC01
+WLAN_CIPHER_SUITE_TKIP = 0x00FAC02
+WLAN_CIPHER_SUITE_RESERVED = 0x00FAC03
+WLAN_CIPHER_SUITE_CCMP = 0x00FAC04
+WLAN_CIPHER_SUITE_WEP104 = 0x00FAC05
+WLAN_CIPHER_SUITE_AES_CMAC = 0x00FAC06
+WLAN_CIPHER_SUITE_GCMP = 0x00FAC08
+WLAN_CIPHER_SUITE_GCMP_256 = 0x00FAC09
+WLAN_CIPHER_SUITE_CCMP_256 = 0x00FAC0A
+WLAN_CIPHER_SUITE_BIP_GMAC_128 = 0x00FAC0B
+WLAN_CIPHER_SUITE_BIP_GMAC_256 = 0x00FAC0C
+WLAN_CIPHER_SUITE_BIP_CMAC_256 = 0x00FAC0D
+(WLAN_CIPHER_SUITE_NAMES, WLAN_CIPHER_SUITE_VALUES) = map_namespace(
+    'WLAN_CIPHER_SUITE_', globals()
+)
+
 
 class nl80211cmd(genlmsg):
     prefix = 'NL80211_ATTR_'
@@ -252,7 +282,7 @@ class nl80211cmd(genlmsg):
         ('NL80211_ATTR_BSS_SHORT_PREAMBLE', 'hex'),
         ('NL80211_ATTR_BSS_SHORT_SLOT_TIME', 'hex'),
         ('NL80211_ATTR_HT_CAPABILITY', 'hex'),
-        ('NL80211_ATTR_SUPPORTED_IFTYPES', 'hex'),
+        ('NL80211_ATTR_SUPPORTED_IFTYPES', 'supported_iftypes'),
         ('NL80211_ATTR_REG_ALPHA2', 'asciiz'),
         ('NL80211_ATTR_REG_RULES', '*reg_rule'),
         ('NL80211_ATTR_MESH_CONFIG', 'hex'),
@@ -270,14 +300,14 @@ class nl80211cmd(genlmsg):
         ('NL80211_ATTR_BSS', 'bss'),
         ('NL80211_ATTR_REG_INITIATOR', 'hex'),
         ('NL80211_ATTR_REG_TYPE', 'hex'),
-        ('NL80211_ATTR_SUPPORTED_COMMANDS', 'hex'),
+        ('NL80211_ATTR_SUPPORTED_COMMANDS', 'supported_commands'),
         ('NL80211_ATTR_FRAME', 'hex'),
         ('NL80211_ATTR_SSID', 'string'),
         ('NL80211_ATTR_AUTH_TYPE', 'uint32'),
         ('NL80211_ATTR_REASON_CODE', 'uint16'),
         ('NL80211_ATTR_KEY_TYPE', 'hex'),
         ('NL80211_ATTR_MAX_SCAN_IE_LEN', 'uint16'),
-        ('NL80211_ATTR_CIPHER_SUITES', 'hex'),
+        ('NL80211_ATTR_CIPHER_SUITES', 'cipher_suites'),
         ('NL80211_ATTR_FREQ_BEFORE', 'hex'),
         ('NL80211_ATTR_FREQ_AFTER', 'hex'),
         ('NL80211_ATTR_FREQ_FIXED', 'hex'),
@@ -325,8 +355,8 @@ class nl80211cmd(genlmsg):
         ('NL80211_ATTR_CONTROL_PORT_ETHERTYPE', 'hex'),
         ('NL80211_ATTR_CONTROL_PORT_NO_ENCRYPT', 'hex'),
         ('NL80211_ATTR_SUPPORT_IBSS_RSN', 'hex'),
-        ('NL80211_ATTR_WIPHY_ANTENNA_TX', 'hex'),
-        ('NL80211_ATTR_WIPHY_ANTENNA_RX', 'hex'),
+        ('NL80211_ATTR_WIPHY_ANTENNA_TX', 'uint32'),
+        ('NL80211_ATTR_WIPHY_ANTENNA_RX', 'uint32'),
         ('NL80211_ATTR_MCAST_RATE', 'hex'),
         ('NL80211_ATTR_OFFCHANNEL_TX_OK', 'hex'),
         ('NL80211_ATTR_BSS_HT_OPMODE', 'hex'),
@@ -746,6 +776,236 @@ class nl80211cmd(genlmsg):
                     "Bitmap[0] 0x{3}".format(count, period, bitmapc, bitmap0)
                 )
 
+            def _get_cipher_list(self, data):
+                ms_oui = bytes((0x00, 0x50, 0xF2))
+                ieee80211_oui = bytes((0x00, 0x0F, 0xAC))
+                if data[:3] == ms_oui:
+                    cipher_list = [
+                        "Use group cipher suite",
+                        "WEP-40",
+                        "TKIP",
+                        None,
+                        "CCMP",
+                        "WEP-104",
+                    ]
+                elif data[:3] == ieee80211_oui:
+                    cipher_list = [
+                        "Use group cipher suite",
+                        "WEP-40",
+                        "TKIP",
+                        None,
+                        "CCMP",
+                        "WEP-104",
+                        "AES-128-CMAC",
+                        "NO-GROUP",
+                        "GCMP",
+                    ]
+                else:
+                    cipher_list = []
+                try:
+                    return cipher_list[data[3]]
+                except IndexError:
+                    return data[:4].hex('-', 1)
+
+            def _get_auth_list(self, data):
+                ms_oui = bytes((0x00, 0x50, 0xF2))
+                ieee80211_oui = bytes((0x00, 0x0F, 0xAC))
+                wfa_oui = bytes((0x50, 0x6F, 0x9A))
+                if data[:3] == ms_oui:
+                    auth_list = [None, "IEEE 802.1X", "PSK"]
+                elif data[:3] == ieee80211_oui:
+                    auth_list = [
+                        None,
+                        "IEEE 802.1X",
+                        "PSK",
+                        "FT/IEEE 802.1X",
+                        "FT/PSK",
+                        "IEEE 802.1X/SHA-256",
+                        "PSK/SHA-256",
+                        "TDLS/TPK",
+                        "SAE",
+                        "FT/SAE",
+                        "IEEE 802.1X/SUITE-B",
+                        "IEEE 802.1X/SUITE-B-192",
+                        "FT/IEEE 802.1X/SHA-384",
+                        "FILS/SHA-256",
+                        "FILS/SHA-384",
+                        "FT/FILS/SHA-256",
+                        "FT/FILS/SHA-384",
+                        "OWE",
+                    ]
+                elif data[:3] == wfa_oui:
+                    auth_list = [None, "OSEN", "DPP"]
+                else:
+                    auth_list = []
+                try:
+                    return auth_list[data[3]]
+                except IndexError:
+                    return data[:4].hex('-', 1)
+
+            def binary_rsn(self, offset, length, defcipher, defauth):
+                data = self.data[offset : offset + length]
+                version = data[0] + (data[1] << 8)
+                data = data[2:]
+                rsn_values = {
+                    "version": version,
+                    "group_cipher": None,
+                    "pairwise_cipher": [],
+                    "auth_suites": [],
+                    "capabilities": [],
+                    "pmkid_ids": None,
+                    "group_mgmt_cipher_suite": None,
+                }
+
+                if len(data) < 4:
+                    rsn_values["group_cipher"] = defcipher
+                    rsn_values["pairwise_cipher"] = defcipher
+                    return rsn_values
+
+                rsn_values["group_cipher"] = self._get_cipher_list(data)
+
+                data = data[4:]
+                if len(data) < 4:
+                    rsn_values["pairwise_cipher"] = defcipher
+                    return rsn_values
+
+                count = data[0] | (data[1] << 8)
+                if 2 + (count * 4) > len(data):
+                    # raise Exception(f"* bogus tail data ({count}):")
+                    return rsn_values
+
+                data = data[2:]
+                for _ in range(count):
+                    rsn_values["pairwise_cipher"].append(
+                        self._get_cipher_list(data)
+                    )
+                    data = data[4:]
+
+                if len(data) < 2:
+                    rsn_values["auth_suites"] = [defauth]
+
+                count = data[0] | (data[1] << 8)
+                if 2 + (count * 4) > len(data):
+                    # raise Exception(f"* bogus tail data ({count}):")
+                    return rsn_values
+
+                data = data[2:]
+                for _ in range(count):
+                    rsn_values["auth_suites"].append(self._get_auth_list(data))
+                    data = data[4:]
+
+                if len(data) >= 2:
+                    capabilities = []
+                    capa = data[0] | (data[1] << 8)
+                    data = data[2:]
+                    if capa & 0x0001:
+                        capabilities.append("PreAuth")
+                    if capa & 0x0002:
+                        capabilities.append("NoPairwise")
+                    capabilities.append(
+                        [
+                            "1-PTKSA-RC",
+                            "2-PTKSA-RC",
+                            "4-PTKSA-RC",
+                            "16-PTKSA-RC",
+                        ][(capa & 0x000C) >> 2]
+                    )
+                    capabilities.append(
+                        [
+                            "1-GTKSA-RC",
+                            "2-GTKSA-RC",
+                            "4-GTKSA-RC",
+                            "16-GTKSA-RC",
+                        ][(capa & 0x0030) >> 4]
+                    )
+                    if capa & 0x0040:
+                        capabilities.append("MFP-required")
+                    if capa & 0x0080:
+                        capabilities.append("MFP-capable")
+                    if capa & 0x0200:
+                        capabilities.append("Peerkey-enabled")
+                    if capa & 0x0400:
+                        capabilities.append("SPP-AMSDU-capable")
+                    if capa & 0x0800:
+                        capabilities.append("SPP-AMSDU-required")
+                    if capa & 0x2000:
+                        capabilities.append("Extended-Key-ID")
+                    rsn_values["capabilities"] = capabilities
+
+                if len(data) >= 2:
+                    pmkid_count = data[0] | (data[1] << 8)
+                    if len(data) < 2 + 16 * pmkid_count:
+                        # raise Exception("invalid")
+                        return rsn_values
+                    data = data[2:]
+                    for _ in range(pmkid_count):
+                        rsn_values["pmkid_ids"].append(data[:16])
+                        data = data[16:]
+
+                if len(data) >= 4:
+                    rsn_values[
+                        "group_mgmt_cipher_suite"
+                    ] = self._get_cipher_list(data)
+                    data = data[4:]
+
+                return rsn_values
+
+            def binary_ht_operation(self, offset, length):
+                data = self.data[offset : offset + length]
+                ht_operation = {}
+                ht_operation["PRIMARY_CHANNEL"] = data[0]
+                ht_operation["SECONDARY_CHANNEL"] = data[1] & 0x3
+                try:
+                    ht_operation["CHANNEL_WIDTH"] = [
+                        BSS_HT_OPER_CHAN_WIDTH_20,
+                        BSS_HT_OPER_CHAN_WIDTH_20_OR_40,
+                    ][(data[1] & 0x4) >> 2]
+                except IndexError:
+                    ht_operation["CHANNEL_WIDTH"] = None
+                try:
+                    ht_operation["HT_PROTECTION"] = [
+                        "no",
+                        "nonmember",
+                        "20 MHz",
+                        "non-HT mixed",
+                    ][data[2] & 0x3]
+                except IndexError:
+                    ht_operation["HT_PROTECTION"] = None
+
+                ht_operation.update(
+                    {
+                        "RIFS": (data[1] & 0x8) >> 3,
+                        "NON_GF_PRESENT": (data[2] & 0x4) >> 2,
+                        "OBSS_NON_GF_PRESENT": (data[2] & 0x10) >> 4,
+                        "DUAL_BEACON": (data[4] & 0x40) >> 6,
+                        "DUAL_CTS_PROTECTION": (data[4] & 0x80) >> 7,
+                        "STBC_BEACON": data[5] & 0x1,
+                        "L_SIG_TXOP_PROT": (data[5] & 0x2) >> 1,
+                        "PCO_ACTIVE": (data[5] & 0x4) >> 2,
+                        "PCO_PHASE": (data[5] & 0x8) >> 3,
+                    }
+                )
+                return ht_operation
+
+            def binary_vht_operation(self, offset, length):
+                data = self.data[offset : offset + length]
+                vht_operation = {
+                    "CENTER_FREQ_SEG_1": data[1],
+                    "CENTER_FREQ_SEG_2": data[1],
+                    "VHT_BASIC_MCS_SET": (data[4], data[3]),
+                }
+                try:
+                    vht_operation["CHANNEL_WIDTH"] = [
+                        BSS_VHT_OPER_CHAN_WIDTH_20_OR_40,
+                        BSS_VHT_OPER_CHAN_WIDTH_80,
+                        BSS_VHT_OPER_CHAN_WIDTH_80P80,
+                        BSS_VHT_OPER_CHAN_WIDTH_160,
+                    ][data[0]]
+                except IndexError:
+                    vht_operation["CHANNEL_WIDTH"] = None
+
+                return vht_operation
+
             def decode_nlas(self):
                 return
 
@@ -781,8 +1041,8 @@ class nl80211cmd(genlmsg):
                         )
 
                     if msg_type == NL80211_BSS_ELEMENTS_RSN:
-                        (self.value["RSN"],) = struct.unpack_from(
-                            '%is' % length, self.data, offset + 2
+                        self.value["RSN"] = self.binary_rsn(
+                            offset + 2, length, "CCMP", "IEEE 802.1X"
                         )
 
                     if msg_type == NL80211_BSS_ELEMENTS_EXTENDED_RATE:
@@ -797,6 +1057,16 @@ class nl80211cmd(genlmsg):
                             '%is' % length, self.data, offset + 2
                         )
                         self.value["VENDOR"].append(vendor_ie)
+
+                    if msg_type == NL80211_BSS_ELEMENTS_HT_OPERATION:
+                        self.value["HT_OPERATION"] = self.binary_ht_operation(
+                            offset + 2, length
+                        )
+
+                    if msg_type == NL80211_BSS_ELEMENTS_VHT_OPERATION:
+                        self.value[
+                            "VHT_OPERATION"
+                        ] = self.binary_vht_operation(offset + 2, length)
 
                     offset += length + 2
 
@@ -1024,6 +1294,113 @@ class nl80211cmd(genlmsg):
             ('NL80211_STA_INFO_MAX', 'hex'),
         )
 
+    class supported_commands(nla_base):
+        '''
+        Supported commands format
+
+        NLA structure header::
+        +++++++++++++++++++++++
+        | uint16_t | uint16_t |
+        |  length  | NLA type |
+        +++++++++++++++++++++++
+
+        followed by multiple command entries::
+        ++++++++++++++++++++++++++++++++++
+        | uint16_t | uint16_t | uint32_t |
+        |   type   |  index   |   cmd    |
+        ++++++++++++++++++++++++++++++++++
+        '''
+
+        def decode(self):
+            nla_base.decode(self)
+            self.value = []
+
+            # Skip the first four bytes: NLA length and NLA type
+            length = self.length - 4
+            offset = self.offset + 4
+            while length > 0:
+                (msg_type, index, cmd_index) = struct.unpack_from(
+                    'HHI', self.data, offset
+                )
+                length -= 8
+                offset += 8
+
+                # Lookup for command name or assign a default name
+                name = NL80211_VALUES.get(
+                    cmd_index, 'NL80211_CMD_{}'.format(cmd_index)
+                )
+                self.value.append(name)
+
+    class cipher_suites(nla_base):
+        '''
+        Cipher suites format
+
+        NLA structure header::
+        +++++++++++++++++++++++
+        | uint16_t | uint16_t |
+        |  length  | NLA type |
+        +++++++++++++++++++++++
+
+        followed by multiple entries::
+        ++++++++++++
+        | uint32_t |
+        |  cipher  |
+        ++++++++++++
+        '''
+
+        def decode(self):
+            nla_base.decode(self)
+            self.value = []
+
+            # Skip the first four bytes: NLA length and NLA type
+            length = self.length - 4
+            offset = self.offset + 4
+            while length > 0:
+                (cipher,) = struct.unpack_from('<I', self.data, offset)
+                length -= 4
+                offset += 4
+
+                # Lookup for cipher name or assign a default name
+                name = WLAN_CIPHER_SUITE_VALUES.get(
+                    cipher, 'WLAN_CIPHER_SUITE_{:08X}'.format(cipher)
+                )
+                self.value.append(name)
+
+    class supported_iftypes(nla_base):
+        '''
+        Supported iftypes format
+
+        NLA structure header::
+        +++++++++++++++++++++++
+        | uint16_t | uint16_t |
+        |  length  | NLA type |
+        +++++++++++++++++++++++
+
+        followed by multiple iftype entries::
+        +++++++++++++++++++++++
+        | uint16_t | uint16_t |
+        |  length  |  iftype  |
+        +++++++++++++++++++++++
+        '''
+
+        def decode(self):
+            nla_base.decode(self)
+            self.value = []
+
+            # Skip the first four bytes: NLA length and NLA type
+            length = self.length - 4
+            offset = self.offset + 4
+            while length > 0:
+                (iflen, iftype) = struct.unpack_from('<HH', self.data, offset)
+                length -= 4
+                offset += 4
+
+                # Lookup for iftype name or assign a default name
+                name = IFTYPE_VALUES.get(
+                    iftype, 'NL80211_IFTYPE_{}'.format(iftype)
+                )
+                self.value.append(name)
+
 
 class MarshalNl80211(Marshal):
     msg_map = {
@@ -1162,5 +1539,5 @@ class NL80211(GenericNetlinkSocket):
 
     def bind(self, groups=0, **kwarg):
         GenericNetlinkSocket.bind(
-            self, 'nl80211', nl80211cmd, groups, None, **kwarg
+            self, NL80211_GENL_NAME, nl80211cmd, groups, None, **kwarg
         )

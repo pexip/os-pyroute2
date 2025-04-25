@@ -121,7 +121,6 @@ import json
 import random
 import sqlite3
 import sys
-import threading
 import time
 import traceback
 from collections import OrderedDict
@@ -131,13 +130,7 @@ from pyroute2 import config
 from pyroute2.common import basestring, uuid32
 
 #
-from .messages import cmsg
 from .objects import address, interface, neighbour, netns, route, rule
-
-try:
-    import queue
-except ImportError:
-    import Queue as queue
 
 try:
     import psycopg2
@@ -156,131 +149,81 @@ class DBProvider(enum.Enum):
     sqlite3 = 'sqlite3'
     psycopg2 = 'psycopg2'
 
-
-class DBConfig:
-    provider = DBProvider.sqlite3
-    spec = ':memory:'
+    def __eq__(self, r):
+        return str(self) == r
 
 
-def publish(method):
-    #
-    # this wrapper will be published in the DBM thread
-    #
-    def _do_local(self, target, request):
-        try:
-            for item in method(self, *request.argv, **request.kwarg):
-                request.response.put(item)
-            request.response.put(StopIteration())
-        except Exception as e:
-            request.response.put(e)
+def publish(f):
+    if isinstance(f, str):
 
-    #
-    # this class will be used to map the requests
-    #
-    class cmsg_req(cmsg):
-        def __init__(self, response, *argv, **kwarg):
-            self['header'] = {'target': None}
-            self.response = response
-            self.argv = argv
-            self.kwarg = kwarg
+        def decorate(m):
+            m.publish = f
+            return m
 
-    #
-    # this method will replace the source one
-    #
-    def _do_dispatch(self, *argv, **kwarg):
-        if self.thread == id(threading.current_thread()):
-            # same thread, run method locally
-            for item in method(self, *argv, **kwarg):
-                yield item
-        else:
-            # another thread, run via message bus
-            self._allow_read.wait()
-            response = queue.Queue()
-            request = cmsg_req(response, *argv, **kwarg)
-            self.event_queue.put((request,))
-            while True:
-                item = response.get()
-                if isinstance(item, StopIteration):
-                    return
-                elif isinstance(item, Exception):
-                    raise item
-                else:
-                    yield item
+        return decorate
 
-    #
-    # announce the function so it will be published
-    #
-    _do_dispatch.publish = (cmsg_req, _do_local)
-
-    return _do_dispatch
+    f.publish = True
+    return f
 
 
-def publish_exec(method):
-    #
-    # this wrapper will be published in the DBM thread
-    #
-    def _do_local(self, target, request):
-        try:
-            (
-                request.response.put(
-                    method(self, *request.argv, **request.kwarg)
-                )
-            )
-        except Exception as e:
-            (request.response.put(e))
+class DBDict(dict):
+    def __init__(self, schema, table):
+        self.schema = schema
+        self.table = table
 
-    #
-    # this class will be used to map the requests
-    #
-    class cmsg_req(cmsg):
-        def __init__(self, response, *argv, **kwarg):
-            self['header'] = {'target': None}
-            self.response = response
-            self.argv = argv
-            self.kwarg = kwarg
+    @publish('get')
+    def __getitem__(self, key):
+        for (record,) in self.schema.fetch(
+            f'''
+            SELECT f_value FROM {self.table}
+            WHERE f_key = {self.schema.plch}
+            ''',
+            (key,),
+        ):
+            return json.loads(record)
+        raise KeyError(f'key {key} not found')
 
-    #
-    # this method will replace the source one
-    #
-    def _do_dispatch(self, *argv, **kwarg):
-        if self.thread == id(threading.current_thread()):
-            # same thread, run method locally
-            return method(self, *argv, **kwarg)
-        else:
-            # another thread, run via message bus
-            response = queue.Queue(maxsize=1)
-            request = cmsg_req(response, *argv, **kwarg)
-            self.event_queue.put((request,))
-            ret = response.get()
-            if isinstance(ret, Exception):
-                raise ret
-            else:
-                return ret
+    @publish('set')
+    def __setitem__(self, key, value):
+        del self[key]
+        self.schema.execute(
+            f'''
+            INSERT INTO {self.table}
+            VALUES ({self.schema.plch}, {self.schema.plch})
+            ''',
+            (key, json.dumps(value)),
+        )
 
-    #
-    # announce the function so it will be published
-    #
-    _do_dispatch.publish = (cmsg_req, _do_local)
+    @publish('del')
+    def __delitem__(self, key):
+        self.schema.execute(
+            f'''
+            DELETE FROM {self.table}
+            WHERE f_key = {self.schema.plch}
+            ''',
+            (key,),
+        )
 
-    return _do_dispatch
+    @publish
+    def keys(self):
+        for (key,) in self.schema.fetch(f'SELECT f_key FROM {self.table}'):
+            yield key
 
+    @publish
+    def items(self):
+        for key, value in self.schema.fetch(
+            f'SELECT f_key, f_value FROM {self.table}'
+        ):
+            yield key, json.loads(value)
 
-class ReadOnly(object):
-    def __init__(self, schema):
-        self._schema = schema
-
-    def __enter__(self):
-        self._schema.allow_write(False)
-        return self
-
-    def __exit__(self, exc_type, exc_value, traceback):
-        self._schema.allow_write(True)
+    @publish
+    def values(self):
+        for (value,) in self.schema.fetch(f'SELECT f_value FROM {self.table}'):
+            yield json.loads(value)
 
 
 class DBSchema:
-
     connection = None
-    thread = None
     event_map = None
     key_defaults = None
     snapshots = None  # <table_name>: <obj_weakref>
@@ -295,34 +238,24 @@ class DBSchema:
     indices = {}
     foreign_keys = {}
 
-    def __init__(
-        self, config, ndb, event_queue, event_map, rtnl_log, log_channel
-    ):
-        # collect all the dispatched methods and publish them
-        for name in dir(self):
-            obj = getattr(self, name, None)
-            if hasattr(obj, 'publish'):
-                event, fbody = obj.publish
-                event_map[event] = [partial(fbody, self)]
-
+    def __init__(self, config, sources, event_map, log_channel):
         global plugins
-        self.ndb = ndb
-        self.config = config
-        self.event_queue = event_queue
+        self.sources = sources
+        self.config = DBDict(self, 'config')
         self.stats = {}
-        self.thread = id(threading.current_thread())
-        self.readonly = ReadOnly(self)
         self.connection = None
         self.cursor = None
-        self.rtnl_log = rtnl_log
         self.log = log_channel
         self.snapshots = {}
         self.key_defaults = {}
         self.event_map = {}
-        self._allow_read = threading.Event()
-        self._allow_read.set()
-        self._allow_write = threading.Event()
-        self._allow_write.set()
+        # cache locally these variables so they will not be
+        # loaded from SQL for every incoming message; this
+        # means also that these variables can not be changed
+        # in runtime
+        self.rtnl_log = config['rtnl_debug']
+        self.provider = config['provider']
+        #
         for plugin in plugins:
             #
             # 1. spec
@@ -337,7 +270,7 @@ class DBSchema:
             for name, cls in plugin.init['classes']:
                 self.classes[name] = cls
         #
-        self.initdb()
+        self.initdb(config)
         #
         for plugin in plugins:
             #
@@ -354,15 +287,15 @@ class DBSchema:
 
         self.gctime = self.ctime = time.time()
 
-    def initdb(self):
+    def initdb(self, config):
         if self.connection is not None:
             self.close()
-        if self.config.provider == DBProvider.sqlite3:
-            self.connection = sqlite3.connect(self.config.spec)
+        if config['provider'] == DBProvider.sqlite3:
+            self.connection = sqlite3.connect(config['spec'])
             self.plch = '?'
             self.connection.execute('PRAGMA foreign_keys = ON')
-        elif self.config.provider == DBProvider.psycopg2:
-            self.connection = psycopg2.connect(**self.config.spec)
+        elif config['provider'] == DBProvider.psycopg2:
+            self.connection = psycopg2.connect(**config['spec'])
             self.plch = '%s'
         else:
             raise TypeError('DB provider not supported')
@@ -391,6 +324,17 @@ class DBSchema:
         )
         self.execute(
             '''
+            DROP TABLE IF EXISTS config
+        '''
+        )
+        self.execute(
+            '''
+            CREATE TABLE config
+                (f_key TEXT PRIMARY KEY, f_value TEXT NOT NULL)
+        '''
+        )
+        self.execute(
+            '''
                      CREATE TABLE IF NOT EXISTS sources
                      (f_target TEXT PRIMARY KEY,
                       f_kind TEXT NOT NULL)
@@ -409,6 +353,8 @@ class DBSchema:
                           ON DELETE CASCADE)
                      '''
         )
+        for key, value in config.items():
+            self.config[key] = value
 
     def merge_spec(self, table1, table2, table, schema_idx):
         spec1 = self.compiled[table1]
@@ -516,7 +462,49 @@ class DBSchema:
             'fidx': ' AND '.join(f_idx_match),
         }
 
-    @publish_exec
+    @publish
+    def add_nl_source(self, target, kind, spec):
+        '''
+        A temprorary method, to be moved out
+        '''
+        # flush
+        self.execute(
+            '''
+                DELETE FROM sources_options
+                WHERE f_target = %s
+            '''
+            % self.plch,
+            (target,),
+        )
+        self.execute(
+            '''
+                DELETE FROM sources
+                WHERE f_target = %s
+            '''
+            % self.plch,
+            (target,),
+        )
+        # add
+        self.execute(
+            '''
+                INSERT INTO sources (f_target, f_kind)
+                VALUES (%s, %s)
+            '''
+            % (self.plch, self.plch),
+            (target, kind),
+        )
+        for key, value in spec.items():
+            vtype = 'int' if isinstance(value, int) else 'str'
+            self.execute(
+                '''
+                    INSERT INTO sources_options
+                    (f_target, f_name, f_type, f_value)
+                    VALUES (%s, %s, %s, %s)
+                '''
+                % (self.plch, self.plch, self.plch, self.plch),
+                (target, key, vtype, value),
+            )
+
     def execute(self, *argv, **kwarg):
         try:
             #
@@ -542,45 +530,11 @@ class DBSchema:
             self.connection.commit()  # no performance optimisation yet
         return self.cursor
 
+    @publish
     def fetchone(self, *argv, **kwarg):
         for row in self.fetch(*argv, **kwarg):
             return row
         return None
-
-    @publish_exec
-    def wait_read(self, timeout=None):
-        return self._allow_read.wait(timeout)
-
-    @publish_exec
-    def wait_write(self, timeout=None):
-        return self._allow_write.wait(timeout)
-
-    def allow_read(self, flag=True):
-        if not flag:
-            # block immediately...
-            self._allow_read.clear()
-        # ...then forward the request through the message bus
-        # in the case of different threads, or simply run stage2
-        self._r_allow_read(flag)
-
-    @publish_exec
-    def _r_allow_read(self, flag):
-        if flag:
-            self._allow_read.set()
-        else:
-            self._allow_read.clear()
-
-    def allow_write(self, flag=True):
-        if not flag:
-            self._allow_write.clear()
-        self._r_allow_write(flag)
-
-    @publish_exec
-    def _r_allow_write(self, flag):
-        if flag:
-            self._allow_write.set()
-        else:
-            self._allow_write.clear()
 
     @publish
     def fetch(self, *argv, **kwarg):
@@ -592,19 +546,16 @@ class DBSchema:
             for row in row_set:
                 yield row
 
-    @publish_exec
+    @publish
     def backup(self, spec):
-        if (
-            sys.version_info >= (3, 7)
-            and self.config.provider == DBProvider.sqlite3
-        ):
+        if sys.version_info >= (3, 7) and self.provider == DBProvider.sqlite3:
             backup_connection = sqlite3.connect(spec)
             self.connection.backup(backup_connection)
             backup_connection.close()
         else:
             raise NotImplementedError()
 
-    @publish_exec
+    @publish
     def export(self, f='stdout'):
         close = False
         if f in ('stdout', 'stderr'):
@@ -627,15 +578,14 @@ class DBSchema:
             if close:
                 f.close()
 
-    @publish_exec
     def close(self):
-        if self.config.spec != ':memory:':
+        if self.config['spec'] != ':memory:':
             # simply discard in-memory sqlite db on exit
             self.purge_snapshots()
             self.connection.commit()
         self.connection.close()
 
-    @publish_exec
+    @publish
     def commit(self):
         self.connection.commit()
 
@@ -734,7 +684,7 @@ class DBSchema:
                 (mark, target),
             )
 
-    @publish_exec
+    @publish
     def flush(self, target):
         for table in self.spec:
             self.execute(
@@ -745,7 +695,7 @@ class DBSchema:
                 (target,),
             )
 
-    @publish_exec
+    @publish
     def save_deps(self, ctxid, weak_ref, iclass):
         uuid = uuid32()
         obj = weak_ref()
@@ -821,14 +771,14 @@ class DBSchema:
             )
             self.snapshots['%s_%s' % (table, ctxid)] = weak_ref
 
-    @publish_exec
+    @publish
     def purge_snapshots(self):
         for table in tuple(self.snapshots):
             for _ in range(MAX_ATTEMPTS):
                 try:
-                    if self.config.provider == DBProvider.sqlite3:
+                    if self.provider == DBProvider.sqlite3:
                         self.execute('DROP TABLE %s' % table)
-                    elif self.config.provider == DBProvider.psycopg2:
+                    elif self.provider == DBProvider.psycopg2:
                         self.execute('DROP TABLE %s CASCADE' % table)
                     self.connection.commit()
                     del self.snapshots[table]
@@ -990,7 +940,7 @@ class DBSchema:
                 values.append(value)
 
             try:
-                if self.config.provider == DBProvider.psycopg2:
+                if self.provider == DBProvider.psycopg2:
                     #
                     # run UPSERT -- the DB provider must support it
                     #
@@ -1011,7 +961,7 @@ class DBSchema:
                         )
                     )
                     #
-                elif self.config.provider == DBProvider.sqlite3:
+                elif self.provider == DBProvider.sqlite3:
                     #
                     # SQLite3 >= 3.24 actually has UPSERT, but ...
                     #

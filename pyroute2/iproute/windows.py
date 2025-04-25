@@ -16,6 +16,7 @@ from socket import AF_INET
 
 from pyroute2.common import AddrPool, Namespace, dqn2int
 from pyroute2.netlink import NLM_F_DUMP, NLM_F_MULTI, NLM_F_REQUEST, NLMSG_DONE
+from pyroute2.netlink.proxy import NetlinkProxy
 from pyroute2.netlink.rtnl import (
     RTM_GETADDR,
     RTM_GETLINK,
@@ -29,7 +30,6 @@ from pyroute2.netlink.rtnl import (
 from pyroute2.netlink.rtnl.ifaddrmsg import ifaddrmsg
 from pyroute2.netlink.rtnl.ifinfmsg import ifinfmsg
 from pyroute2.netlink.rtnl.marshal import MarshalRtnl
-from pyroute2.proxy import NetlinkProxy
 
 MAX_ADAPTER_NAME_LENGTH = 256
 MAX_ADAPTER_DESCRIPTION_LENGTH = 128
@@ -83,6 +83,7 @@ class IPRoute(object):
             self, {'addr_pool': AddrPool(0x10000, 0x1FFFF), 'monitor': False}
         )
         self._sproxy = NetlinkProxy(policy='return', nl=send_ns)
+        self.target = kwarg.get('target') or 'localhost'
 
     def __enter__(self):
         return self
@@ -173,6 +174,8 @@ class IPRoute(object):
             }
 
             msg = ifinfmsg().load(spec)
+            msg['header']['target'] = self.target
+            msg['header']['type'] = RTM_NEWLINK
             del msg['value']
             ret['interfaces'].append(msg)
 
@@ -195,6 +198,8 @@ class IPRoute(object):
                     ),
                 }
                 msg = ifaddrmsg().load(spec)
+                msg['header']['target'] = self.target
+                msg['header']['type'] = RTM_NEWADDR
                 del msg['value']
                 ret['addresses'].append(msg)
                 if ipaddr.Next:
@@ -207,6 +212,16 @@ class IPRoute(object):
             else:
                 break
         return ret
+
+    def dump(self, groups=None):
+        for method in (
+            self.get_links,
+            self.get_addr,
+            self.get_neighbours,
+            self.get_routes,
+        ):
+            for msg in method():
+                yield msg
 
     def get_links(self, *argv, **kwarg):
         '''

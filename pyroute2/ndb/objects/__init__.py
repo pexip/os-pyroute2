@@ -24,25 +24,35 @@ the `IPRoute` methods is valid here as well.
 
 See also: :ref:`iproute`
 
-.. code-block:: python
+
+.. testsetup::
+
+    from pyroute2 import IPMock as IPRoute
+    from pyroute2 import NDB
+    from pyroute2 import config
+
+    config.mock_iproute = True
+
+.. testcode::
 
     # create a vlan interface with IPRoute
+    eth0 = 2
     with IPRoute() as ipr:
         ipr.link("add",
                  ifname="vlan1108",
                  kind="vlan",
-                 link=ipr.link_lookup(ifname="eth0"),
+                 link=eth0,
                  vlan_id=1108)
 
     # same with NDB:
     with NDB(log="stderr") as ndb:
-        (ndb
-         .interfaces
-         .create(ifname="vlan1108",
-                 kind="vlan",
-                 link="eth0",
-                 vlan_id=1108)
-         .commit())
+        vlan = ndb.interfaces.create(
+            ifname="vlan1108",
+            kind="vlan",
+            link="eth0",
+            vlan_id=1108,
+        )
+        vlan.commit()
 
 Slightly simplifying, if a network object doesn't exist, NDB will run
 an RTNL method with "add" argument, if exists -- "set", and to remove
@@ -113,6 +123,7 @@ class RTNL_Object(dict):
     key_extra_fields = []
     hidden_fields = []
     fields_cmp = {}
+    fields_load_transform = {}
     field_filter = object
     rollback_chain = []
 
@@ -203,7 +214,9 @@ class RTNL_Object(dict):
     #
     @classmethod
     def _count(cls, view):
-        return view.ndb.schema.fetchone('SELECT count(*) FROM %s' % view.table)
+        return view.ndb.task_manager.db_fetchone(
+            'SELECT count(*) FROM %s' % view.table
+        )
 
     @classmethod
     def _dump_where(cls, view):
@@ -219,7 +232,7 @@ class RTNL_Object(dict):
         )
         yield names
         where, values = cls._dump_where(view)
-        for record in view.ndb.schema.fetch(req + where, values):
+        for record in view.ndb.task_manager.db_fetch(req + where, values):
             yield record
 
     @classmethod
@@ -263,6 +276,7 @@ class RTNL_Object(dict):
         self.master = master
         self.ctxid = ctxid
         self.schema = view.ndb.schema
+        self.task_manager = view.ndb.task_manager
         self.changed = set()
         self.iclass = iclass
         self.utable = self.utable or self.table
@@ -492,23 +506,26 @@ class RTNL_Object(dict):
 
     def set(self, *argv, **kwarg):
         '''
-        Set a field specified by `key` to `value`, and return self. The
-        method is useful to write call chains like that::
+        Call formats:
 
-            (ndb
-             .interfaces["eth0"]
-             .set('mtu', 1200)
-             .set('state', 'up')
-             .set('address', '00:11:22:33:44:55')
-             .commit())
+        * `set(key, value)`
+        * `set(key=value)`
+        * `set(key1=value1, key2=value2)`
+
+        .. code-block:: python
+
+            with ndb.interfaces["eth0"] as eth0:
+                eth0.set(
+                    mtu=1200,
+                    state='up',
+                    address='00:11:22:33:44:55',
+                )
         '''
-        key, value = None, None
         if argv:
-            key, value = argv
+            self[argv[0]] = argv[1]
         elif kwarg:
             for key, value in kwarg.items():
-                break
-        self[key] = value
+                self[key] = value
         return self
 
     def wtime(self, itn=1):
@@ -537,7 +554,11 @@ class RTNL_Object(dict):
             # Do not trust the implicit scope and pass the
             # weakref explicitly via partial
             #
-            (self.ndb.register_handler(event, partial(wr_handler, wr, fname)))
+            (
+                self.ndb.task_manager.register_handler(
+                    event, partial(wr_handler, wr, fname)
+                )
+            )
 
     @check_auth('obj:modify')
     def snapshot(self, ctxid=None):
@@ -557,7 +578,9 @@ class RTNL_Object(dict):
         snp = type(self)(
             self.view, key, ctxid=ctxid, auth_managers=self.auth_managers
         )
-        self.ndb.schema.save_deps(ctxid, weakref.ref(snp), self.iclass)
+        self.ndb.task_manager.db_save_deps(
+            ctxid, weakref.ref(snp), self.iclass
+        )
         snp.changed = set(self.changed)
         return snp
 
@@ -602,7 +625,7 @@ class RTNL_Object(dict):
                 if value is not None and name in self.spec:
                     keys.append('f_%s = %s' % (name, self.schema.plch))
                     values.append(value)
-            spec = self.ndb.schema.fetchone(
+            spec = self.ndb.task_manager.db_fetchone(
                 'SELECT %s FROM %s WHERE %s'
                 % (' , '.join(fetch), self.etable, ' AND '.join(keys)),
                 values,
@@ -700,8 +723,8 @@ class RTNL_Object(dict):
         # variable will be saved in the traceback, so the tables will be
         # available to debug. If the traceback will be saved somewhere then
         # the tables will never be dropped by the GC, so you can do it
-        # manually by `ndb.schema.purge_snapshots()` -- to invalidate all
-        # the snapshots and to drop the associated tables.
+        # manually by `ndb.task_manager.db_purge_snapshots()` -- to invalidate
+        # all the snapshots and to drop the associated tables.
 
         self.last_save = self.snapshot()
         # Apply the changes
@@ -772,7 +795,7 @@ class RTNL_Object(dict):
             conditions.append('f_%s = %s' % (name, self.schema.plch))
             values.append(self.get(self.iclass.nla2name(name), None))
         return (
-            self.ndb.schema.fetchone(
+            self.ndb.task_manager.db_fetchone(
                 '''
                           SELECT count(*) FROM %s WHERE %s
                           '''
@@ -823,7 +846,7 @@ class RTNL_Object(dict):
 
         # Load the current state
         try:
-            self.schema.commit()
+            self.task_manager.db_commit()
         except Exception:
             pass
         self.load_sql(set_state=False)
@@ -953,7 +976,7 @@ class RTNL_Object(dict):
                     continue
                 table = cls.table
                 # comprare the tables
-                diff = self.ndb.schema.fetch(
+                diff = self.ndb.task_manager.db_fetch(
                     '''
                     SELECT * FROM %s_%s
                       EXCEPT
@@ -1017,7 +1040,7 @@ class RTNL_Object(dict):
                 self.log.debug('criteria matched')
                 return ret
             self.log.debug(f'resync the DB attempt {attempt}')
-            self.ndb.schema.flush(self['target'])
+            self.ndb.task_manager.db_flush(self['target'])
             self.load_event.clear()
             (
                 self.ndb._event_queue.put(
@@ -1056,9 +1079,10 @@ class RTNL_Object(dict):
         Load a value and clean up the `self.changed` set if the
         loaded value matches the expectation.
         '''
+        if key in self.fields_load_transform:
+            value = self.fields_load_transform[key](value)
         if self.load_debug:
             self.log.debug('load %s: %s' % (key, value))
-
         if key not in self.changed:
             dict.__setitem__(self, key, value)
         elif self.get(key) == value:
@@ -1092,7 +1116,7 @@ class RTNL_Object(dict):
                 value = json.dumps(value)
             values.append(value)
 
-        spec = self.ndb.schema.fetchone(
+        spec = self.ndb.task_manager.db_fetchone(
             'SELECT * FROM %s WHERE %s' % (table, ' AND '.join(keys)), values
         )
         self.log.debug('load_sql load: %s' % str(spec))

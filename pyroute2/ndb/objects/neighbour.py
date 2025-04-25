@@ -76,7 +76,6 @@ def fallback_add(self, idx_req, req):
 
 
 class Neighbour(RTNL_Object):
-
     table = 'neighbours'
     msg_class = ndmsg
     field_filter = NeighbourFieldFilter
@@ -85,13 +84,13 @@ class Neighbour(RTNL_Object):
     @classmethod
     def _count(cls, view):
         if view.chain:
-            return view.ndb.schema.fetchone(
+            return view.ndb.task_manager.db_fetchone(
                 'SELECT count(*) FROM %s WHERE f_ifindex = %s'
                 % (view.table, view.ndb.schema.plch),
                 [view.chain['index']],
             )
         else:
-            return view.ndb.schema.fetchone(
+            return view.ndb.task_manager.db_fetchone(
                 'SELECT count(*) FROM %s' % view.table
             )
 
@@ -129,7 +128,7 @@ class Neighbour(RTNL_Object):
               '''
         yield ('target', 'tflags', 'ifname', 'lladdr', 'dst')
         where, values = cls._dump_where(view)
-        for record in view.ndb.schema.fetch(req + where, values):
+        for record in view.ndb.task_manager.db_fetch(req + where, values):
             yield record
 
     def __init__(self, *argv, **kwarg):
@@ -157,7 +156,6 @@ class Neighbour(RTNL_Object):
 
 
 class FDBRecord(Neighbour):
-
     table = 'af_bridge_fdb'
     msg_class = ndmsg
     api = 'fdb'

@@ -1,6 +1,30 @@
 Changelog
 =========
 
+* 0.7.7
+    * ss2: user context patch <https://github.com/svinota/pyroute2/pull/1087>
+    * ndb: basic altname support
+    * nl80211: decoder improvements <https://github.com/svinota/pyroute2/pull/1086>
+* 0.7.6
+    * setup: static loader <https://github.com/svinota/pyroute2/issues/1076>
+    * iproute: support altname in link_lookup()
+    * ethtool: fd leaks <https://github.com/svinota/pyroute2/pull/1081>
+* 0.7.5
+    * nlsocket: fix marshal reference <https://github.com/svinota/pyroute2/issues/1068>
+* 0.7.4
+    * rtnl: SRv6 updates <https://github.com/svinota/pyroute2/pull/1037>
+    * connector: basic implementation <https://github.com/svinota/pyroute2/issues/1036>
+    * nftables: sets draft <https://github.com/svinota/pyroute2/pull/1017>
+    * ss2: provide as a module <https://github.com/svinota/pyroute2/pull/1062>
+* 0.7.3
+    * nlsocket: CompileContext support
+    * nlsocket: support for per request parsers (see `IPRoute.get_default_routes()`)
+    * generic: added support for dumping policies <https://github.com/svinota/pyroute2/pull/981>
+    * ndb: changed API for reports
+    * conntrack: fix TCP states <https://github.com/svinota/pyroute2/pull/991>
+    * ipmock: new component (IPMock) for mock tests
+    * thermal: update
+    * ci: `nlm_generator = True` -- force using generators in the CI
 * 0.7.2
     * iproute: fix neighbours dump <https://github.com/svinota/pyroute2/issues/962>
     * iproute: fix rule add <https://github.com/svinota/pyroute2/issues/964>
