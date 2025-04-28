@@ -96,7 +96,8 @@ else:
     NetNS = None
     NetNSManager = None
 
-SOURCE_FAIL_PAUSE = 5
+SOURCE_FAIL_PAUSE = 1
+SOURCE_MAX_ERRORS = 3
 
 
 class SourceProxy(object):
@@ -158,7 +159,7 @@ class Source(dict):
         # the target id -- just in case
         self.target = spec['target']
         self.kind = spec.pop('kind', 'local')
-        self.persistent = spec.pop('persistent', True)
+        self.max_errors = spec.pop('max_errors', SOURCE_MAX_ERRORS)
         self.event = spec.pop('event')
         # RTNL API
         self.nl_prime = self.get_prime(self.kind)
@@ -176,54 +177,40 @@ class Source(dict):
         self.log = ndb.log.channel('sources.%s' % self.target)
         self.state = State(log=self.log, wait_list=['running'])
         self.state.set('init')
-        self.ndb.schema.execute(
-            '''
-                                INSERT INTO sources (f_target, f_kind)
-                                VALUES (%s, %s)
-                                '''
-            % (self.ndb.schema.plch, self.ndb.schema.plch),
-            (self.target, self.kind),
-        )
-        for key, value in spec.items():
-            vtype = 'int' if isinstance(value, int) else 'str'
-            self.ndb.schema.execute(
-                '''
-                                    INSERT INTO sources_options
-                                    (f_target, f_name, f_type, f_value)
-                                    VALUES (%s, %s, %s, %s)
-                                    '''
-                % (
-                    self.ndb.schema.plch,
-                    self.ndb.schema.plch,
-                    self.ndb.schema.plch,
-                    self.ndb.schema.plch,
-                ),
-                (self.target, key, vtype, value),
-            )
-
+        self.ndb.task_manager.db_add_nl_source(self.target, self.kind, spec)
         self.load_sql()
 
-    def __del__(self):
-        try:
-            self.ndb.schema.execute(
-                '''
-                                    DELETE FROM sources_options
-                                    WHERE f_target = %s
-                                    '''
-                % self.ndb.schema.plch,
-                (self.target,),
-            )
+    @property
+    def must_restart(self):
+        if self.max_errors < 0 or self.errors_counter <= self.max_errors:
+            return True
+        return False
 
-            self.ndb.schema.execute(
-                '''
-                                    DELETE FROM sources
-                                    WHERE f_target = %s
-                                    '''
-                % self.ndb.schema.plch,
-                (self.target,),
+    @property
+    def bind_arguments(self):
+        return dict(
+            filter(
+                lambda x: x[1] is not None,
+                (
+                    ('async_cache', True),
+                    ('clone_socket', True),
+                    ('groups', self.nl_kwarg.get('groups')),
+                ),
             )
-        except:
-            pass
+        )
+
+    def set_ready(self):
+        try:
+            if self.event is not None:
+                self.evq.put(
+                    (cmsg_event(self.target, self.event),), source=self.target
+                )
+            else:
+                self.evq.put((cmsg_sstart(self.target),), source=self.target)
+        except ShutdownException:
+            self.state.set('stop')
+            return False
+        return True
 
     @classmethod
     def defaults(cls, spec):
@@ -327,10 +314,10 @@ class Source(dict):
         # The routine exists on an event with error code == 104
         #
         while self.state.get() != 'stop':
-            with self.lock:
-                if self.shutdown.is_set():
-                    break
+            if self.shutdown.is_set():
+                break
 
+            with self.lock:
                 if self.nl is not None:
                     try:
                         self.nl.close(code=0)
@@ -344,28 +331,27 @@ class Source(dict):
                         if self.kind in ('nsmanager',):
                             spec['libc'] = self.ndb.libc
                         self.nl = self.nl_prime(**spec)
-                        self.errors_counter = 0
                     else:
                         raise TypeError('source channel not supported')
                     self.state.set('loading')
                     #
-                    self.nl.bind(async_cache=True, clone_socket=True)
+                    self.nl.bind(**self.bind_arguments)
                     #
                     # Initial load -- enqueue the data
                     #
-                    self.ndb.schema.allow_read(False)
                     try:
-                        self.ndb.schema.flush(self.target)
+                        self.ndb.task_manager.db_flush(self.target)
                         if self.kind in ('local', 'netns', 'remote'):
                             self.fake_zero_if()
                         self.evq.put(self.nl.dump(), source=self.target)
                     finally:
-                        self.ndb.schema.allow_read(True)
+                        pass
+                    self.errors_counter = 0
                 except Exception as e:
                     self.errors_counter += 1
                     self.started.set()
-                    self.state.set('failed')
-                    self.log.error('source error: %s %s' % (type(e), e))
+                    self.state.set(f'failed, counter {self.errors_counter}')
+                    self.log.error(f'source error: {type(e)} {e}')
                     try:
                         self.evq.put(
                             (cmsg_failed(self.target),), source=self.target
@@ -373,7 +359,7 @@ class Source(dict):
                     except ShutdownException:
                         self.state.set('stop')
                         break
-                    if self.persistent:
+                    if self.must_restart:
                         self.log.debug('sleeping before restart')
                         self.state.set('restart')
                         self.shutdown.wait(SOURCE_FAIL_PAUSE)
@@ -382,24 +368,12 @@ class Source(dict):
                             self.state.set('stop')
                             break
                     else:
-                        self.event.set()
-                        return
+                        return self.set_ready()
                     continue
 
             with self.lock:
                 if self.state.get() == 'loading':
-                    try:
-                        if self.event is not None:
-                            self.evq.put(
-                                (cmsg_event(self.target, self.event),),
-                                source=self.target,
-                            )
-                        else:
-                            self.evq.put(
-                                (cmsg_sstart(self.target),), source=self.target
-                            )
-                    except ShutdownException:
-                        self.state.set('stop')
+                    if not self.set_ready():
                         break
                     self.started.set()
                     self.shutdown.clear()
@@ -412,7 +386,7 @@ class Source(dict):
                     self.errors_counter += 1
                     self.log.error('source error: %s %s' % (type(e), e))
                     msg = None
-                    if self.persistent:
+                    if self.must_restart:
                         self.state.set('restart')
                     else:
                         self.state.set('stop')
@@ -426,7 +400,6 @@ class Source(dict):
                     self.state.set('stop')
                     break
 
-                self.ndb.schema._allow_write.wait()
                 try:
                     self.evq.put(msg, source=self.target)
                 except ShutdownException:
@@ -439,7 +412,7 @@ class Source(dict):
         try:
             self.sync()
             self.log.debug('flush DB for the target')
-            self.ndb.schema.flush(self.target)
+            self.ndb.task_manager.db_flush(self.target)
         except ShutdownException:
             self.log.debug('shutdown handled by the main thread')
             pass
@@ -452,7 +425,6 @@ class Source(dict):
         sync.wait()
 
     def start(self):
-
         #
         # Start source thread
         with self.lock:
@@ -491,7 +463,6 @@ class Source(dict):
             with self.shutdown_lock:
                 self.log.debug('restarting the source, reason <%s>' % (reason))
                 self.started.clear()
-                self.ndb.schema.allow_read(False)
                 try:
                     self.close()
                     if self.th:
@@ -499,7 +470,7 @@ class Source(dict):
                     self.shutdown.clear()
                     self.start()
                 finally:
-                    self.ndb.schema.allow_read(True)
+                    pass
         self.started.wait()
 
     def __enter__(self):
@@ -510,7 +481,7 @@ class Source(dict):
 
     def load_sql(self):
         #
-        spec = self.ndb.schema.fetchone(
+        spec = self.ndb.task_manager.db_fetchone(
             '''
                                         SELECT * FROM sources
                                         WHERE f_target = %s
@@ -519,7 +490,7 @@ class Source(dict):
             (self.target,),
         )
         self['target'], self['kind'] = spec
-        for spec in self.ndb.schema.fetch(
+        for spec in self.ndb.task_manager.db_fetch(
             '''
                                           SELECT * FROM sources_options
                                           WHERE f_target = %s

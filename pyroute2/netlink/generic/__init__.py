@@ -10,9 +10,12 @@ import logging
 
 from pyroute2.netlink import (
     CTRL_CMD_GETFAMILY,
+    CTRL_CMD_GETPOLICY,
     GENL_ID_CTRL,
     NETLINK_ADD_MEMBERSHIP,
     NETLINK_DROP_MEMBERSHIP,
+    NLM_F_ACK,
+    NLM_F_DUMP,
     NLM_F_REQUEST,
     SOL_NETLINK,
     ctrlmsg,
@@ -100,3 +103,24 @@ class GenericNetlinkSocket(NetlinkSocket):
                     logger(self.module_err_message)
             raise err
         return msg
+
+    def policy(self, proto):
+        '''
+        Extract policy information for a generic netlink protocol -- takes
+        a string as the only parameter, return protocol policy
+        '''
+        self.marshal.msg_map[GENL_ID_CTRL] = ctrlmsg
+        msg = ctrlmsg()
+        msg['cmd'] = CTRL_CMD_GETPOLICY
+        msg['attrs'].append(['CTRL_ATTR_FAMILY_NAME', proto])
+        return self.nlm_request(
+            msg,
+            msg_type=GENL_ID_CTRL,
+            msg_flags=NLM_F_REQUEST | NLM_F_DUMP | NLM_F_ACK,
+        )
+
+    def get(self, *argv, **kwarg):
+        return tuple(super().get(*argv, **kwarg))
+
+    def nlm_request(self, *argv, **kwarg):
+        return tuple(super().nlm_request(*argv, **kwarg))

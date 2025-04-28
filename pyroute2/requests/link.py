@@ -5,7 +5,6 @@ from .common import Index, IPRouteFilter, NLAKeyTransform
 
 
 class LinkFieldFilter(Index, NLAKeyTransform):
-
     _nla_prefix = 'IFLA_'
 
     def _link(self, key, context, value):
@@ -110,7 +109,7 @@ class LinkIPRouteFilter(IPRouteFilter):
 
         if self.command == 'dump':
             context[('linkinfo', 'kind')] = self.kind
-            for (key, value) in tuple(context.items()):
+            for key, value in tuple(context.items()):
                 if key in self.specific:
                     context[('linkinfo', 'data', key)] = value
                     try:
@@ -121,7 +120,7 @@ class LinkIPRouteFilter(IPRouteFilter):
 
         # get common ifinfmsg NLAs
         self.common = []
-        for (key, _) in ifinfmsg.nla_map:
+        for key, _ in ifinfmsg.nla_map:
             self.common.append(key)
             self.common.append(key[len(ifinfmsg.prefix) :].lower())
         self.common.append('family')
@@ -140,7 +139,7 @@ class LinkIPRouteFilter(IPRouteFilter):
         context['IFLA_LINKINFO'] = linkinfo
         self.linkinfo.append(['IFLA_INFO_KIND', self.kind])
         # flush deferred NLAs
-        for (key, value) in tuple(context.items()):
+        for key, value in tuple(context.items()):
             if self.push_specific(key, value):
                 try:
                     del context[key]
@@ -149,24 +148,28 @@ class LinkIPRouteFilter(IPRouteFilter):
 
     def push_specific(self, key, value):
         # FIXME: vlan hack
-        if self.kind == 'vlan' and key == 'vlan_flags':
-            if isinstance(value, (list, tuple)):
-                if len(value) == 2 and all(
-                    (isinstance(x, int) for x in value)
-                ):
-                    value = {'flags': value[0], 'mask': value[1]}
-                else:
-                    ret = 0
-                    for x in value:
-                        ret |= vlan_flags.get(x, 1)
-                    value = {'flags': ret, 'mask': ret}
-            elif isinstance(value, int):
-                value = {'flags': value, 'mask': value}
-            elif isinstance(value, str):
-                value = vlan_flags.get(value, 1)
-                value = {'flags': value, 'mask': value}
-            elif not isinstance(value, dict):
-                raise ValueError()
+        if self.kind == 'vlan':
+            if key == 'vlan_flags':
+                if isinstance(value, (list, tuple)):
+                    if len(value) == 2 and all(
+                        (isinstance(x, int) for x in value)
+                    ):
+                        value = {'flags': value[0], 'mask': value[1]}
+                    else:
+                        ret = 0
+                        for x in value:
+                            ret |= vlan_flags.get(x, 1)
+                        value = {'flags': ret, 'mask': ret}
+                elif isinstance(value, int):
+                    value = {'flags': value, 'mask': value}
+                elif isinstance(value, str):
+                    value = vlan_flags.get(value, 1)
+                    value = {'flags': value, 'mask': value}
+                elif not isinstance(value, dict):
+                    raise ValueError()
+            elif key in ('vlan_egress_qos', 'vlan_ingress_qos'):
+                if isinstance(value, dict) and {'from', 'to'} == value.keys():
+                    value = {'attrs': (('IFLA_VLAN_QOS_MAPPING', value),)}
         # the kind is known: lookup the NLA
         if key in self.specific:
             # FIXME: slave hack

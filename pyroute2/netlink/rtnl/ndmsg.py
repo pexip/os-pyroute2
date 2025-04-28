@@ -98,10 +98,11 @@ class ndmsg(nlmsg):
         ('NDA_VNI', 'uint32'),
         ('NDA_IFINDEX', 'uint32'),
         ('NDA_MASTER', 'uint32'),
+        ('NDA_LINK_NETNSID', 'uint32'),
+        ('NDA_SRC_VNI', 'uint32'),
     )
 
     class cacheinfo(nla):
-
         __slots__ = ()
 
         fields = (

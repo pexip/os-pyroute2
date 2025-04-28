@@ -46,7 +46,6 @@ SKNLGRP_INET6_UDP_DESTROY = 4
 
 
 class sock_diag_req(nlmsg):
-
     fields = (('sdiag_family', 'B'), ('sdiag_protocol', 'B'))
 
 
@@ -87,7 +86,6 @@ class inet_addr_codec(nlmsg):
 
 
 class inet_diag_req(inet_addr_codec):
-
     ffname = 'sdiag_family'
     fields = (
         ('sdiag_family', 'B'),
@@ -105,7 +103,6 @@ class inet_diag_req(inet_addr_codec):
 
 
 class inet_diag_msg(inet_addr_codec):
-
     ffname = 'idiag_family'
     fields = (
         ('idiag_family', 'B'),
@@ -258,7 +255,6 @@ class inet_diag_msg(inet_addr_codec):
 
 
 class unix_diag_req(nlmsg):
-
     fields = (
         ('sdiag_family', 'B'),
         ('sdiag_protocol', 'B'),
@@ -271,7 +267,6 @@ class unix_diag_req(nlmsg):
 
 
 class unix_diag_msg(nlmsg):
-
     fields = (
         ('udiag_family', 'B'),
         ('udiag_type', 'B'),
@@ -299,10 +294,10 @@ class unix_diag_msg(nlmsg):
 
 
 class MarshalDiag(Marshal):
-    type_format = 'B'
+    key_format = 'B'
     # The family goes after the nlmsg header,
     # IHHII = 4 + 2 + 2 + 4 + 4 = 16 bytes
-    type_offset = 16
+    key_offset = 16
     # Please notice that the SOCK_DIAG Marshal
     # uses not the nlmsg type, but sdiag_family
     # to choose the proper class
@@ -365,6 +360,10 @@ class DiagSocket(NetlinkSocket):
             raise NotImplementedError()
         req['sdiag_family'] = family
 
-        return self.nlm_request(
-            req, SOCK_DIAG_BY_FAMILY, NLM_F_REQUEST | NLM_F_ROOT | NLM_F_MATCH
+        return tuple(
+            self.nlm_request(
+                req,
+                SOCK_DIAG_BY_FAMILY,
+                NLM_F_REQUEST | NLM_F_ROOT | NLM_F_MATCH,
+            )
         )

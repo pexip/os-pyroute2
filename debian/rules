@@ -9,6 +9,12 @@ export python=python3
 %:
 	dh $@ --with python3,sphinxdoc --buildsystem=pybuild
 
+override_dh_auto_clean:
+	rm -rf build .stestr *.egg-info .pybuild
+	find . -iname '*.pyc' -delete
+	for i in $$(find . -type d -iname __pycache__) ; do rm -rf $$i ; done
+	rm -f pyroute2/config/version.py
+
 override_dh_auto_test:
 ifeq (,$(findstring nocheck, $(DEB_BUILD_OPTIONS)))
 	echo "No tests for now..."
@@ -20,6 +26,7 @@ endif
 
 override_dh_auto_build:
 	echo $$OSLO_PACKAGE_VERSION > VERSION
+	$(MAKE) VERSION
 	dh_auto_build
 
 override_dh_installchangelogs:

@@ -1,72 +1,105 @@
 '''
+
+.. testsetup::
+
+    from pyroute2 import NDB
+    from pyroute2 import config
+    config.mock_iproute = True
+    ndb = NDB()
+
+.. testsetup:: tables
+
+    from pyroute2 import NDB
+    from pyroute2 import config
+    config.mock_iproute = True
+    ndb = NDB()
+    ndb.routes.create(
+        dst='1.1.1.1/32', gateway='127.0.0.10', oif=1, table=101
+    ).commit()
+    ndb.routes.create(
+        dst='1.1.1.2/32', gateway='127.0.0.10', oif=1, table=5001
+    ).commit()
+    ndb.routes.create(
+        dst='1.1.1.3/32', gateway='127.0.0.10', oif=1, table=5002
+    ).commit()
+
+.. testsetup:: metrics
+
+    from pyroute2 import NDB
+    from pyroute2 import config
+    config.mock_iproute = True
+    ndb = NDB()
+    ndb.routes.create(
+        dst='10.0.0.0/24', gateway='127.0.0.10'
+    ).commit()
+
 Simple routes
 =============
 
-Ordinary routes management is really simple::
+Ordinary routes management is really simple:
 
-    (ndb            # create a route
-     .routes
-     .create(dst='10.0.0.0/24', gateway='192.168.122.1')
-     .commit())
+.. testcode::
 
-    (ndb            # retrieve a route and change it
-     .routes['10.0.0.0/24']
-     .set('gateway', '192.168.122.10')
-     .set('priority', 500)
-     .commit())
+    # create a route
+    ndb.routes.create(
+        dst='10.0.0.0/24',
+        gateway='192.168.122.1'
+    ).commit()
 
-    (ndb            # remove a route
-     .routes['10.0.0.0/24']
-     .remove()
-     .commit())
+    # retrieve a route and change it
+    with ndb.routes['10.0.0.0/24'] as route:
+        route.set(gateway='192.168.122.10')
+
+    # remove a route
+    with ndb.routes['10.0.0.0/24'] as route:
+        route.remove()
 
 
 Multiple routing tables
 =======================
 
-But Linux systems have more than one routing table::
+But Linux systems have more than one routing table:
+
+.. doctest:: tables
 
     >>> set((x.table for x in ndb.routes.summary()))
-    {101, 254, 255, 5001, 5002}
+    {101, 5001, 5002, 254, 255}
 
 The main routing table is 254. All the routes people mostly work with are
 in that table. To address routes in other routing tables, you can use dict
-specs::
+specs:
 
-    (ndb
-     .routes
-     .create(dst='10.0.0.0/24', gateway='192.168.122.1', table=101)
-     .commit())
+.. testcode::
 
-    (ndb
-     .routes[{'table': 101, 'dst': '10.0.0.0/24'}]
-     .set('gateway', '192.168.122.10')
-     .set('priority', 500)
-     .commit())
+    ndb.routes.create(
+        dst='10.0.0.0/24',
+        gateway='192.168.122.1',
+        table=101
+    ).commit()
 
-    (ndb
-     .routes[{'table': 101, 'dst': '10.0.0.0/24'}]
-     .remove()
-     .commit())
+    with ndb.routes[{'table': 101, 'dst': '10.0.0.0/24'}] as route:
+        route.set('gateway', '192.168.122.10')
+        route.set('priority', 500)
+
+    with ndb.routes[{'table': 101, 'dst': '10.0.0.0/24'}] as route:
+        route.remove()
 
 Route metrics
 =============
 
 `route['metrics']` attribute provides a dictionary-like object that
-reflects route metrics like hop limit, mtu etc::
+reflects route metrics like hop limit, mtu etc:
+
+.. testcode:: metrics
 
     # set up all metrics from a dictionary
-    (ndb
-     .routes['10.0.0.0/24']
-     .set('metrics', {'mtu': 1500, 'hoplimit': 20})
-     .commit())
+    with ndb.routes['10.0.0.0/24'] as route:
+        route.set('metrics', {'mtu': 1500, 'hoplimit': 20})
 
     # fix individual metrics
-    (ndb
-     .routes['10.0.0.0/24']['metrics']
-     .set('mtu', 1500)
-     .set('hoplimit', 20)
-     .commit())
+    with ndb.routes['10.0.0.0/24']['metrics'] as metrics:
+        metrics.set('mtu', 1500)
+        metrics.set('hoplimit', 20)
 
 MPLS routes
 ===========
@@ -370,7 +403,6 @@ class Via(OrderedDict):
 
 
 class Route(RTNL_Object):
-
     table = 'routes'
     msg_class = rtmsg
     hidden_fields = ['route_id']
@@ -382,13 +414,13 @@ class Route(RTNL_Object):
     @classmethod
     def _count(cls, view):
         if view.chain:
-            return view.ndb.schema.fetchone(
+            return view.ndb.task_manager.db_fetchone(
                 'SELECT count(*) FROM %s WHERE f_RTA_OIF = %s'
                 % (view.table, view.ndb.schema.plch),
                 [view.chain['index']],
             )
         else:
-            return view.ndb.schema.fetchone(
+            return view.ndb.task_manager.db_fetchone(
                 'SELECT count(*) FROM %s' % view.table
             )
 
@@ -452,7 +484,7 @@ class Route(RTNL_Object):
             'gateway',
         )
         where, values = cls._dump_where(view)
-        for record in view.ndb.schema.fetch(req + where, values):
+        for record in view.ndb.task_manager.db_fetch(req + where, values):
             yield record
 
     @classmethod
@@ -475,48 +507,51 @@ class Route(RTNL_Object):
         yield header
         plch = view.ndb.schema.plch
         where, values = cls._dump_where(view)
-        for record in view.ndb.schema.fetch(req + where, values):
+        for record in view.ndb.task_manager.db_fetch(req + where, values):
             route_id = record[-1]
             record = list(record[:-1])
-            #
-            # fetch metrics
-            metrics = tuple(
-                view.ndb.schema.fetch(
-                    '''
-                SELECT * FROM metrics WHERE f_route_id = %s
-            '''
-                    % (plch,),
-                    (route_id,),
+            if route_id is not None:
+                #
+                # fetch metrics
+                metrics = tuple(
+                    view.ndb.task_manager.db_fetch(
+                        '''
+                    SELECT * FROM metrics WHERE f_route_id = %s
+                '''
+                        % (plch,),
+                        (route_id,),
+                    )
                 )
-            )
-            if metrics:
-                ret = {}
-                names = view.ndb.schema.compiled['metrics']['norm_names']
-                for k, v in zip(names, metrics[0]):
-                    if v is not None and k not in (
-                        'target',
-                        'route_id',
-                        'tflags',
-                    ):
-                        ret[k] = v
-                record.append(json.dumps(ret))
-            else:
-                record.append(None)
-            #
-            # fetch encap
-            enc_mpls = tuple(
-                view.ndb.schema.fetch(
-                    '''
-                SELECT * FROM enc_mpls WHERE f_route_id = %s
-            '''
-                    % (plch,),
-                    (route_id,),
+                if metrics:
+                    ret = {}
+                    names = view.ndb.schema.compiled['metrics']['norm_names']
+                    for k, v in zip(names, metrics[0]):
+                        if v is not None and k not in (
+                            'target',
+                            'route_id',
+                            'tflags',
+                        ):
+                            ret[k] = v
+                    record.append(json.dumps(ret))
+                else:
+                    record.append(None)
+                #
+                # fetch encap
+                enc_mpls = tuple(
+                    view.ndb.task_manager.db_fetch(
+                        '''
+                    SELECT * FROM enc_mpls WHERE f_route_id = %s
+                '''
+                        % (plch,),
+                        (route_id,),
+                    )
                 )
-            )
-            if enc_mpls:
-                record.append(enc_mpls[0][2])
+                if enc_mpls:
+                    record.append(enc_mpls[0][2])
+                else:
+                    record.append(None)
             else:
-                record.append(None)
+                record.extend((None, None))
             yield record
 
     @classmethod
@@ -566,7 +601,7 @@ class Route(RTNL_Object):
         kwarg['iclass'] = rtmsg
         self.event_map = {rtmsg: "load_rtnlmsg"}
         dict.__setitem__(self, 'multipath', [])
-        dict.__setitem__(self, 'metrics', {})
+        dict.__setitem__(self, 'metrics', MetricsStub(self))
         dict.__setitem__(self, 'deps', 0)
         super(Route, self).__init__(*argv, **kwarg)
 
@@ -664,7 +699,7 @@ class Route(RTNL_Object):
                 self.changed.remove(key)
         elif key == 'metrics':
             value = dict(value)
-            if self.state == 'invalid':
+            if not isinstance(self['metrics'], Metrics):
                 value['create'] = True
             obj = Metrics(
                 self, self.view, value, auth_managers=self.auth_managers
@@ -722,7 +757,7 @@ class Route(RTNL_Object):
         if self['deps'] & F_RTA_ENCAP:
             for _ in range(5):
                 enc = tuple(
-                    self.schema.fetch(
+                    self.task_manager.db_fetch(
                         'SELECT * FROM enc_mpls WHERE f_route_id = %s'
                         % (self.schema.plch,),
                         (self['route_id'],),
@@ -744,7 +779,7 @@ class Route(RTNL_Object):
         if self['deps'] & F_RTA_METRICS:
             for _ in range(5):
                 metrics = tuple(
-                    self.schema.fetch(
+                    self.task_manager.db_fetch(
                         'SELECT * FROM metrics WHERE f_route_id = %s'
                         % (self.schema.plch,),
                         (self['route_id'],),
@@ -768,7 +803,7 @@ class Route(RTNL_Object):
         #
         # FIXME: use self['deps']
         if 'nh_id' not in self and self.get('route_id') is not None:
-            nhs = self.schema.fetch(
+            nhs = self.task_manager.db_fetch(
                 'SELECT * FROM nh WHERE f_route_id = %s' % (self.schema.plch,),
                 (self['route_id'],),
             )
@@ -808,16 +843,24 @@ class Route(RTNL_Object):
                 )
 
 
-class RouteSub(object):
+class RouteSub:
     def apply(self, rollback=False, req_filter=None, mode='apply'):
         return self.route.apply(rollback, req_filter, mode)
 
     def commit(self):
         return self.route.commit()
 
+    def set(self, key, value):
+        self[key] = value
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc_value, traceback):
+        self.commit()
+
 
 class NextHop(RouteSub, RTNL_Object):
-
     msg_class = nh
     table = 'nh'
     hidden_fields = ('route_id', 'target')
@@ -843,8 +886,20 @@ class NextHop(RouteSub, RTNL_Object):
         super(NextHop, self).__init__(*argv, **kwarg)
 
 
-class Metrics(RouteSub, RTNL_Object):
+class MetricsStub(RouteSub, dict):
+    def __init__(self, route):
+        self.route = route
 
+    def __setitem__(self, key, value):
+        # This assignment forces the Metrics object to replace
+        # MetricsStub; it is the MetricsStub object end of life
+        self.route['metrics'] = {key: value}
+
+    def __getitem__(self, key):
+        raise KeyError('metrics not initialized for this route')
+
+
+class Metrics(RouteSub, RTNL_Object):
     msg_class = rtmsg.metrics
     table = 'metrics'
     hidden_fields = ('route_id', 'target')

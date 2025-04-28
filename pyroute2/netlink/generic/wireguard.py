@@ -3,16 +3,15 @@
 Usage::
 
     # Imports
-    from pyroute2 import IPDB, WireGuard
+    from pyroute2 import NDB, WireGuard
 
     IFNAME = 'wg1'
 
     # Create a WireGuard interface
-    with IPDB() as ip:
-        wg1 = ip.create(kind='wireguard', ifname=IFNAME)
-        wg1.add_ip('10.0.0.1/24')
-        wg1.up()
-        wg1.commit()
+    with NDB() as ndb:
+        with ndb.interfaces.create(kind='wireguard', ifname=IFNAME) as link:
+            link.add_ip('10.0.0.1/24')
+            link.set(state='up')
 
     # Create WireGuard object
     wg = WireGuard()
@@ -44,12 +43,13 @@ Usage::
     wg.info(IFNAME)
 
     # Get specific value from the interface
-    wg.info(IFNAME)[0].WGDEVICE_A_PRIVATE_KEY.value
+    wg.info(IFNAME)[0].get('WGDEVICE_A_PRIVATE_KEY')
 
 
 NOTES:
 
-* Using `set` method only requires an interface name.
+* The `get()` method always returns iterable
+* Using `set()` method only requires an interface name
 * The `peer` structure is described as follow::
 
     struct peer_s {

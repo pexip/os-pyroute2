@@ -192,7 +192,6 @@ class rtmsg_base(nlflags):
         )
 
     class seg6_encap_info(nla):
-
         __slots__ = ()
 
         nla_map = (
@@ -201,7 +200,6 @@ class rtmsg_base(nlflags):
         )
 
         class ipv6_sr_hdr(nla):
-
             __slots__ = ()
 
             fields = (
@@ -352,7 +350,6 @@ class rtmsg_base(nlflags):
                     self['hmac'] = hexdump(hmac[4:8])
 
     class bpf_encap_info(nla):
-
         __slots__ = ()
 
         nla_map = (
@@ -364,7 +361,6 @@ class rtmsg_base(nlflags):
         )
 
         class bpf_obj(nla):
-
             __slots__ = ()
 
             nla_map = (
@@ -374,7 +370,6 @@ class rtmsg_base(nlflags):
             )
 
     class seg6local_encap_info(nla):
-
         __slots__ = ()
 
         nla_map = (
@@ -391,7 +386,6 @@ class rtmsg_base(nlflags):
         )
 
         class bpf_obj(nla):
-
             __slots__ = ()
 
             nla_map = (
@@ -401,7 +395,6 @@ class rtmsg_base(nlflags):
             )
 
         class ipv6_sr_hdr(nla):
-
             __slots__ = ()
 
             fields = (
@@ -576,6 +569,7 @@ class rtmsg_base(nlflags):
             SEG6_LOCAL_ACTION_END_AS = 13
             SEG6_LOCAL_ACTION_END_AM = 14
             SEG6_LOCAL_ACTION_END_BPF = 15
+            SEG6_LOCAL_ACTION_END_DT46 = 16
 
             actions = {
                 'End': SEG6_LOCAL_ACTION_END,
@@ -593,6 +587,7 @@ class rtmsg_base(nlflags):
                 'End.AS': SEG6_LOCAL_ACTION_END_AS,
                 'End.AM': SEG6_LOCAL_ACTION_END_AM,
                 'End.BPF': SEG6_LOCAL_ACTION_END_BPF,
+                'End.DT46': SEG6_LOCAL_ACTION_END_DT46,
             }
 
             def encode(self):
@@ -607,21 +602,18 @@ class rtmsg_base(nlflags):
                 nla.encode(self)
 
         class iif(nla):
-
             __slots__ = ()
 
             # Index of the incoming interface
             fields = (('value', 'I'),)
 
         class oif(nla):
-
             __slots__ = ()
 
             # Index of the outcoming interface
             fields = (('value', 'I'),)
 
         class nh4(nla_string):
-
             __slots__ = ()
 
             # Nexthop of the IPv4 family
@@ -639,7 +631,6 @@ class rtmsg_base(nlflags):
                 self['value'] = inet_ntop(AF_INET, self['value'])
 
         class nh6(nla_string):
-
             __slots__ = ()
 
             # Nexthop of the IPv6 family
@@ -657,7 +648,6 @@ class rtmsg_base(nlflags):
                 self['value'] = inet_ntop(AF_INET6, self['value'])
 
         class vrf_table(nla):
-
             __slots__ = ()
 
             # VRF Table ID
@@ -674,7 +664,6 @@ class rtmsg_base(nlflags):
     }
 
     class rta_mfc_stats(nla):
-
         __slots__ = ()
 
         fields = (
@@ -684,7 +673,6 @@ class rtmsg_base(nlflags):
         )
 
     class metrics(nla):
-
         __slots__ = ()
 
         prefix = 'RTAX_'
@@ -712,7 +700,6 @@ class rtmsg_base(nlflags):
         return nh
 
     class rtvia(nla_string):
-
         __slots__ = ()
         sql_type = 'TEXT'
 
@@ -739,7 +726,6 @@ class rtmsg_base(nlflags):
             self.value = {'family': family, 'addr': addr}
 
     class cacheinfo(nla):
-
         __slots__ = ()
 
         fields = (
@@ -755,7 +741,6 @@ class rtmsg_base(nlflags):
 
 
 class rtmsg(rtmsg_base, nlmsg):
-
     __slots__ = ()
 
     def encode(self):
@@ -778,7 +763,6 @@ class rtmsg(rtmsg_base, nlmsg):
 
 
 class nh(rtmsg_base, nla):
-
     __slots__ = ()
 
     is_nla = False

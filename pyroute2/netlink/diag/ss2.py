@@ -58,7 +58,6 @@ except ImportError:
 
 
 class UserCtxtMap(Mapping):
-
     _data = {}
 
     _sk_inode_re = re.compile(r"socket:\[(?P<ino>\d+)\]")
@@ -88,7 +87,6 @@ class UserCtxtMap(Mapping):
         _ctxt=None,
         _recurs_path=[],
     ):
-
         step = _recurs_path.pop(0)
 
         if self._BUILD_RECURS_PATH[0] == step:
@@ -148,7 +146,14 @@ class UserCtxtMap(Mapping):
 
             ctxt = {"cmd": proc.exe(), "full_cmd": proc.cmdline(), "fds": []}
 
-            self._enter_item(usr, flow, ctxt)
+            try:
+                self._enter_item(usr, flow, ctxt)
+            except FileNotFoundError:
+                # Handling edge case of race condition between build and parse
+                # time. That's for very volatile, shortlived flows that can
+                # exist during build but are gone once we want to parse the
+                # inode.
+                pass
 
     def __init__(self):
         self._build()
@@ -257,7 +262,6 @@ class UNIX(Protocol):
 
 
 class TCP(Protocol):
-
     INET_DIAG_MEMINFO = 1
     INET_DIAG_INFO = 2
     INET_DIAG_VEGASINFO = 3
@@ -287,7 +291,6 @@ class TCP(Protocol):
         print(printable)
 
     def _refine_diag_raw(self, raw_stats, do_resolve, usr_ctxt):
-
         refined = {'TCP': {'flows': []}}
 
         idiag_refine_map = {
@@ -362,7 +365,6 @@ class TCP(Protocol):
     # interim approach
     # tcpinfo call backs
     class InfoCbCore:
-
         # normalizer
         @staticmethod
         def rto_n_cb(key, value, **ctx):
@@ -441,7 +443,6 @@ class TCP(Protocol):
             return out
 
     def _refine_tcp_info(self, vessel, tcp_info_raw):
-
         ti = TCP.InfoCbCore
 
         info_refine_tabl = {
@@ -586,7 +587,6 @@ def prepare_args():
 
 
 def run(args=None):
-
     if psutil is None:
         raise RuntimeError('ss2 requires python-psutil >= 5.0 to run')
 

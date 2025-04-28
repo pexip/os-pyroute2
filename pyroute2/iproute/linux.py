@@ -17,6 +17,7 @@ from pyroute2.netlink import (
     NLM_F_ATOMIC,
     NLM_F_CREATE,
     NLM_F_DUMP,
+    NLM_F_ECHO,
     NLM_F_EXCL,
     NLM_F_REPLACE,
     NLM_F_REQUEST,
@@ -60,6 +61,14 @@ from pyroute2.netlink.rtnl import (
     RTM_NEWTCLASS,
     RTM_NEWTFILTER,
     RTM_SETLINK,
+    RTMGRP_IPV4_IFADDR,
+    RTMGRP_IPV4_ROUTE,
+    RTMGRP_IPV4_RULE,
+    RTMGRP_IPV6_IFADDR,
+    RTMGRP_IPV6_ROUTE,
+    RTMGRP_IPV6_RULE,
+    RTMGRP_LINK,
+    RTMGRP_NEIGH,
     TC_H_ROOT,
     ndmsg,
     rt_proto,
@@ -97,6 +106,8 @@ from pyroute2.requests.neighbour import (
 from pyroute2.requests.route import RouteFieldFilter, RouteIPRouteFilter
 from pyroute2.requests.rule import RuleFieldFilter, RuleIPRouteFilter
 
+from .parsers import default_routes
+
 DEFAULT_TABLE = 254
 log = logging.getLogger(__name__)
 
@@ -109,15 +120,6 @@ def get_dump_filter(kwarg):
         if 'family' in kwarg:
             new_kwarg['family'] = kwarg.pop('family')
         return kwarg, new_kwarg
-
-
-def get_msg_type(command, command_map):
-    if isinstance(command, basestring):
-        return command_map[command]
-    elif isinstance(command, (list, tuple)):
-        return command
-    else:
-        raise TypeError('command must be a string or a tuple')
 
 
 def transform_handle(handle):
@@ -178,6 +180,35 @@ class RTNL_API:
 
             self._genmatch = self.filter_messages
             self.filter_messages = filter_messages
+
+    def make_request_type(self, command, command_map):
+        if isinstance(command, basestring):
+            return (lambda x: (x[0], self.make_request_flags(x[1])))(
+                command_map[command]
+            )
+        elif isinstance(command, int):
+            return command, self.make_request_flags('create')
+        elif isinstance(command, (list, tuple)):
+            return command
+        else:
+            raise TypeError('allowed command types: int, str, list, tuple')
+
+    def make_request_flags(self, mode):
+        flags = {
+            'dump': NLM_F_REQUEST | NLM_F_DUMP,
+            'get': NLM_F_REQUEST | NLM_F_ACK,
+            'req': NLM_F_REQUEST | NLM_F_ACK,
+        }
+        flags['create'] = flags['req'] | NLM_F_CREATE | NLM_F_EXCL
+        flags['append'] = flags['req'] | NLM_F_CREATE | NLM_F_APPEND
+        flags['change'] = flags['req'] | NLM_F_REPLACE
+        flags['replace'] = flags['change'] | NLM_F_CREATE
+
+        return flags[mode] | (
+            NLM_F_ECHO
+            if (self.config['nlm_echo'] and mode not in ('get', 'dump'))
+            else 0
+        )
 
     def filter_messages(self, dump_filter, msgs):
         '''
@@ -249,7 +280,7 @@ class RTNL_API:
 
     # 8<---------------------------------------------------------------
     #
-    def dump(self):
+    def dump(self, groups=None):
         '''
         Dump network objects.
 
@@ -277,26 +308,34 @@ class RTNL_API:
         # BSD systems have only subset of the API
         #
         if self.uname[0] == 'OpenBSD':
-            methods = (
-                self.get_links,
-                self.get_addr,
-                self.get_neighbours,
-                self.get_routes,
-            )
+            groups_map = {
+                1: [
+                    self.get_links,
+                    self.get_addr,
+                    self.get_neighbours,
+                    self.get_routes,
+                ]
+            }
         else:
-            methods = (
-                self.get_links,
-                self.get_addr,
-                self.get_neighbours,
-                self.get_routes,
-                self.get_vlans,
-                partial(self.fdb, 'dump'),
-                partial(self.get_rules, family=AF_INET),
-                partial(self.get_rules, family=AF_INET6),
-            )
-        for method in methods:
-            for msg in method():
-                yield msg
+            groups_map = {
+                RTMGRP_LINK: [
+                    self.get_links,
+                    self.get_vlans,
+                    partial(self.fdb, 'dump'),
+                ],
+                RTMGRP_IPV4_IFADDR: [partial(self.get_addr, family=AF_INET)],
+                RTMGRP_IPV6_IFADDR: [partial(self.get_addr, family=AF_INET6)],
+                RTMGRP_NEIGH: [self.get_neighbours],
+                RTMGRP_IPV4_ROUTE: [partial(self.get_routes, family=AF_INET)],
+                RTMGRP_IPV6_ROUTE: [partial(self.get_routes, family=AF_INET6)],
+                RTMGRP_IPV4_RULE: [partial(self.get_rules, family=AF_INET)],
+                RTMGRP_IPV6_RULE: [partial(self.get_rules, family=AF_INET6)],
+            }
+        for group, methods in groups_map.items():
+            if group & (groups if groups is not None else self.groups):
+                for method in methods:
+                    for msg in method():
+                        yield msg
 
     def poll(self, method, command, timeout=10, interval=0.2, **spec):
         '''
@@ -349,7 +388,7 @@ class RTNL_API:
         msg['family'] = AF_UNSPEC
         ret = self.nlm_request(msg, RTM_GETQDISC)
         if index is None:
-            return ret
+            return tuple(ret)
         else:
             return [x for x in ret if x['index'] == index]
 
@@ -362,7 +401,7 @@ class RTNL_API:
         msg['index'] = index
         msg['handle'] = transform_handle(handle)
         msg['parent'] = transform_handle(parent)
-        return self.nlm_request(msg, RTM_GETTFILTER)
+        return tuple(self.nlm_request(msg, RTM_GETTFILTER))
 
     def get_classes(self, index=0):
         '''
@@ -371,7 +410,7 @@ class RTNL_API:
         msg = tcmsg()
         msg['family'] = AF_UNSPEC
         msg['index'] = index
-        return self.nlm_request(msg, RTM_GETTCLASS)
+        return tuple(self.nlm_request(msg, RTM_GETTCLASS))
 
     def get_vlans(self, **kwarg):
         '''
@@ -457,7 +496,7 @@ class RTNL_API:
         '''
         msg = ndtmsg()
         msg['family'] = family
-        return self.nlm_request(msg, RTM_GETNEIGHTBL)
+        return tuple(self.nlm_request(msg, RTM_GETNEIGHTBL))
 
     def get_addr(self, family=AF_UNSPEC, match=None, **kwarg):
         '''
@@ -710,12 +749,20 @@ class RTNL_API:
         '''
         Get default routes
         '''
-        # according to iproute2/ip/iproute.c:print_route()
-        return [
-            x
-            for x in self.get_routes(family, table=table)
-            if (x.get_attr('RTA_DST', None) is None and x['dst_len'] == 0)
-        ]
+        msg = rtmsg()
+        msg['family'] = family
+
+        routes = self.nlm_request(
+            msg,
+            msg_type=RTM_GETROUTE,
+            msg_flags=NLM_F_DUMP | NLM_F_REQUEST,
+            parser=default_routes,
+        )
+
+        if table is None:
+            return routes
+        else:
+            return self.filter_messages({'table': table}, routes)
 
     def link_lookup(self, match=None, **kwarg):
         '''
@@ -731,7 +778,7 @@ class RTNL_API:
         Please note, that link_lookup() returns list, not one
         value.
         '''
-        if set(kwarg) in ({'index'}, {'ifname'}, {'index', 'ifname'}):
+        if kwarg and set(kwarg) < {'index', 'ifname', 'altname'}:
             # shortcut for index and ifname
             try:
                 for link in self.link('get', **kwarg):
@@ -832,12 +879,11 @@ class RTNL_API:
         else:
             match = kwarg.pop('match', None)
 
-        flags_dump = NLM_F_REQUEST | NLM_F_DUMP
-        commands = {
-            'dump': (RTM_GETLINK, flags_dump),
-            'show': (RTM_GETLINK, flags_dump),
+        command_map = {
+            'dump': (RTM_GETLINK, 'dump'),
+            'show': (RTM_GETLINK, 'dump'),
         }
-        (command, msg_flags) = commands.get(command, command)
+        (command, msg_flags) = self.make_request_type(command, command_map)
 
         msg = ifinfmsg()
         msg['index'] = kwarg.get('index', 0)
@@ -854,7 +900,7 @@ class RTNL_API:
         if match is not None:
             ret = self.filter_messages(match, ret)
 
-        if not (command == RTM_GETLINK and self.nlm_generator):
+        if self.nlm_generator and not msg_flags & NLM_F_DUMP == NLM_F_DUMP:
             ret = tuple(ret)
 
         return ret
@@ -943,16 +989,22 @@ class RTNL_API:
             Now all the traffic to the network 172.16.5.2/24 will go
             to vlan 500 only via ports that have such vlan filter.
 
+        Required arguments for `vlan_filter()`: `index` and `vlan_info`.
 
-        Required arguments for `vlan_filter()` -- `index` and `vlan_info`.
-        Vlan info struct::
+        Vlan info dict::
 
-            {"vid": uint16,
-             "flags": uint16}
+            ip.vlan_filter('add',
+                            index=<ifindex>,
+                            vlan_info =
+                            {'vid': <single or range>,
+                            'pvid': <bool>,
+                            'flags': int or list}
 
         More details:
             * kernel:Documentation/networking/switchdev.txt
             * pyroute2.netlink.rtnl.ifinfmsg:... vlan_info
+
+        Setting PVID or specifying a range will specify the approprate flags.
 
         One can specify `flags` as int or as a list of flag names:
             * `master` == 0x1
@@ -964,12 +1016,42 @@ class RTNL_API:
 
         E.g.::
 
-            {"vid": 20,
-             "flags": ["pvid", "untagged"]}
+            {'vid': 20, 'pvid': true }
 
             # is equal to
-            {"vid": 20,
-             "flags": 6}
+            {'vid': 20, 'flags': ['pvid', 'untagged']}
+
+            # is equal to
+            {'vid': 20, 'flags': 6}
+
+            # range
+            {'vid': '100-199'}
+
+        Required arguments for `vlan_filter()`: `index` and `vlan_tunnel_info`.
+
+        Vlan tunnel info dict::
+
+            ip.vlan_filter('add',
+                          index=<ifindex>,
+                          vlan_tunnel_info =
+                          {'vid': <single or range>,
+                          'id': <single or range>}
+
+        vlan_tunnel_info appears to only use the 'range_begin' and 'range_end'
+        flags from vlan_info. Specifying a range will automatically send the
+        needed flags.
+
+        Example::
+
+            {'vid': 20, 'id: 20}
+            {'vid': '200-299', 'id': '200-299'}
+
+        The above directives can be combined as in the example::
+
+          ip.vlan_filter('add',
+                        index=7,
+                        vlan_info={'vid': 600},
+                        vlan_tunnel_info={'vid': 600, 'id': 600})
 
         Commands:
 
@@ -977,19 +1059,18 @@ class RTNL_API:
 
         Add vlan filter to a bridge port. Example::
 
-            ip.vlan_filter("add", index=2, vlan_info={"vid": 200})
+          ip.vlan_filter("add", index=2, vlan_info={"vid": 200})
 
         **del**
 
         Remove vlan filter from a bridge port. Example::
 
-            ip.vlan_filter("del", index=2, vlan_info={"vid": 200})
+          ip.vlan_filter("del", index=2, vlan_info={"vid": 200})
 
         '''
-        flags_req = NLM_F_REQUEST | NLM_F_ACK
-        commands = {
-            'add': (RTM_SETLINK, flags_req),
-            'del': (RTM_DELLINK, flags_req),
+        command_map = {
+            'add': (RTM_SETLINK, 'req'),
+            'del': (RTM_DELLINK, 'req'),
         }
 
         kwarg['family'] = AF_BRIDGE
@@ -998,7 +1079,7 @@ class RTNL_API:
             BridgeIPRouteFilter(command),
         ]
 
-        (command, flags) = commands.get(command, command)
+        (command, flags) = self.make_request_type(command, command_map)
         return tuple(self.link((command, flags), **kwarg))
 
     def fdb(self, command, **kwarg):
@@ -1047,6 +1128,14 @@ class RTNL_API:
                    dst='10.0.0.1',
                    port=5678,
                    vni=600)
+
+            # or specify src_vni for a vlan-aware vxlan device
+            ip.fdb('add',
+                   ifindex=ip.link_lookup(ifname='vx500')[0]
+                   lladdr='00:11:22:33:44:55',
+                   dst='10.0.0.1',
+                   port=5678,
+                   src_vni=600)
 
         **append**
 
@@ -1157,23 +1246,17 @@ class RTNL_API:
                      dst='172.16.45.1',
                      ifindex=idx)
         '''
-        flags_dump = NLM_F_REQUEST | NLM_F_DUMP
-        flags_base = NLM_F_REQUEST | NLM_F_ACK
-        flags_make = flags_base | NLM_F_CREATE | NLM_F_EXCL
-        flags_append = flags_base | NLM_F_CREATE | NLM_F_APPEND
-        flags_change = flags_base | NLM_F_REPLACE
-        flags_replace = flags_change | NLM_F_CREATE
         command_map = {
-            'add': (RTM_NEWNEIGH, flags_make),
-            'set': (RTM_NEWNEIGH, flags_replace),
-            'replace': (RTM_NEWNEIGH, flags_replace),
-            'change': (RTM_NEWNEIGH, flags_change),
-            'del': (RTM_DELNEIGH, flags_base),
-            'remove': (RTM_DELNEIGH, flags_base),
-            'delete': (RTM_DELNEIGH, flags_base),
-            'dump': (RTM_GETNEIGH, flags_dump),
-            'get': (RTM_GETNEIGH, flags_base),
-            'append': (RTM_NEWNEIGH, flags_append),
+            'add': (RTM_NEWNEIGH, 'create'),
+            'set': (RTM_NEWNEIGH, 'replace'),
+            'replace': (RTM_NEWNEIGH, 'replace'),
+            'change': (RTM_NEWNEIGH, 'change'),
+            'del': (RTM_DELNEIGH, 'req'),
+            'remove': (RTM_DELNEIGH, 'req'),
+            'delete': (RTM_DELNEIGH, 'req'),
+            'dump': (RTM_GETNEIGH, 'dump'),
+            'get': (RTM_GETNEIGH, 'get'),
+            'append': (RTM_NEWNEIGH, 'append'),
         }
         dump_filter = None
         msg = ndmsg.ndmsg()
@@ -1186,7 +1269,7 @@ class RTNL_API:
             .apply_filter(NeighbourIPRouteFilter(command))
             .finalize()
         )
-        msg_type, msg_flags = get_msg_type(command, command_map)
+        msg_type, msg_flags = self.make_request_type(command, command_map)
 
         # fill the fields
         for field in msg.fields:
@@ -1209,7 +1292,7 @@ class RTNL_API:
         if command == 'dump' and dump_filter:
             ret = self.filter_messages(dump_filter, ret)
 
-        if not (msg_type == RTM_GETNEIGH and self.nlm_generator):
+        if self.nlm_generator and not msg_flags & NLM_F_DUMP == NLM_F_DUMP:
             ret = tuple(ret)
 
         return ret
@@ -1546,21 +1629,17 @@ class RTNL_API:
 
             ip.link("get", index=3, ext_mask=1)
         '''
-        flags_dump = NLM_F_REQUEST | NLM_F_DUMP
-        flags_req = NLM_F_REQUEST | NLM_F_ACK
-        flags_create = flags_req | NLM_F_CREATE | NLM_F_EXCL
-        flag_append = flags_create | NLM_F_APPEND
         command_map = {
-            'set': (RTM_NEWLINK, flags_req),
-            'update': (RTM_SETLINK, flags_create),
-            'add': (RTM_NEWLINK, flags_create),
-            'del': (RTM_DELLINK, flags_req),
-            'property_add': (RTM_NEWLINKPROP, flag_append),
-            'property_del': (RTM_DELLINKPROP, flags_req),
-            'remove': (RTM_DELLINK, flags_req),
-            'delete': (RTM_DELLINK, flags_req),
-            'dump': (RTM_GETLINK, flags_dump),
-            'get': (RTM_GETLINK, NLM_F_REQUEST),
+            'set': (RTM_NEWLINK, 'req'),
+            'update': (RTM_SETLINK, 'create'),
+            'add': (RTM_NEWLINK, 'create'),
+            'del': (RTM_DELLINK, 'req'),
+            'property_add': (RTM_NEWLINKPROP, 'append'),
+            'property_del': (RTM_DELLINKPROP, 'req'),
+            'remove': (RTM_DELLINK, 'req'),
+            'delete': (RTM_DELLINK, 'req'),
+            'dump': (RTM_GETLINK, 'dump'),
+            'get': (RTM_GETLINK, 'get'),
         }
         dump_filter = None
         request = {}
@@ -1579,7 +1658,7 @@ class RTNL_API:
                 request.apply_filter(rfilter)
             request.finalize()
 
-        msg_type, msg_flags = get_msg_type(command, command_map)
+        msg_type, msg_flags = self.make_request_type(command, command_map)
 
         for field in msg.fields:
             msg[field[0]] = request.pop(field[0], 0)
@@ -1602,7 +1681,7 @@ class RTNL_API:
                 )
             ret = self.filter_messages(dump_filter, ret)
 
-        if not (msg_type == RTM_GETLINK and self.nlm_generator):
+        if self.nlm_generator and not msg_flags & NLM_F_DUMP == NLM_F_DUMP:
             ret = tuple(ret)
 
         return ret
@@ -1675,17 +1754,13 @@ class RTNL_API:
                 'usage of mask is deprecated, use prefixlen instead',
                 DeprecationWarning,
             )
-        flags_dump = NLM_F_REQUEST | NLM_F_DUMP
-        flags_base = NLM_F_REQUEST | NLM_F_ACK
-        flags_create = flags_base | NLM_F_CREATE | NLM_F_EXCL
-        flags_replace = flags_base | NLM_F_REPLACE | NLM_F_CREATE
         command_map = {
-            'add': (RTM_NEWADDR, flags_create),
-            'del': (RTM_DELADDR, flags_base),
-            'remove': (RTM_DELADDR, flags_base),
-            'delete': (RTM_DELADDR, flags_base),
-            'replace': (RTM_NEWADDR, flags_replace),
-            'dump': (RTM_GETADDR, flags_dump),
+            'add': (RTM_NEWADDR, 'create'),
+            'del': (RTM_DELADDR, 'req'),
+            'remove': (RTM_DELADDR, 'req'),
+            'delete': (RTM_DELADDR, 'req'),
+            'replace': (RTM_NEWADDR, 'replace'),
+            'dump': (RTM_GETADDR, 'dump'),
         }
         dump_filter = None
         msg = ifaddrmsg()
@@ -1698,7 +1773,7 @@ class RTNL_API:
             .apply_filter(AddressIPRouteFilter(command))
             .finalize()
         )
-        msg_type, msg_flags = get_msg_type(command, command_map)
+        msg_type, msg_flags = self.make_request_type(command, command_map)
 
         for field in msg.fields:
             if field[0] != 'flags':  # Flags are supplied as NLA
@@ -1719,7 +1794,7 @@ class RTNL_API:
         if command == 'dump' and dump_filter is not None:
             ret = self.filter_messages(dump_filter, ret)
 
-        if not (command == RTM_GETADDR and self.nlm_generator):
+        if self.nlm_generator and not msg_flags & NLM_F_DUMP == NLM_F_DUMP:
             ret = tuple(ret)
 
         return ret
@@ -1798,29 +1873,22 @@ class RTNL_API:
             else:
                 return 'No help available'
 
-        flags_base = NLM_F_REQUEST | NLM_F_ACK
-        flags_make = flags_base | NLM_F_CREATE | NLM_F_EXCL
-        flags_change = flags_base | NLM_F_REPLACE
-        flags_replace = flags_change | NLM_F_CREATE
-
-        commands = {
-            'add': (RTM_NEWQDISC, flags_make),
-            'del': (RTM_DELQDISC, flags_base),
-            'remove': (RTM_DELQDISC, flags_base),
-            'delete': (RTM_DELQDISC, flags_base),
-            'change': (RTM_NEWQDISC, flags_change),
-            'replace': (RTM_NEWQDISC, flags_replace),
-            'add-class': (RTM_NEWTCLASS, flags_make),
-            'del-class': (RTM_DELTCLASS, flags_base),
-            'change-class': (RTM_NEWTCLASS, flags_change),
-            'replace-class': (RTM_NEWTCLASS, flags_replace),
-            'add-filter': (RTM_NEWTFILTER, flags_make),
-            'del-filter': (RTM_DELTFILTER, flags_base),
-            'change-filter': (RTM_NEWTFILTER, flags_change),
-            'replace-filter': (RTM_NEWTFILTER, flags_replace),
+        command_map = {
+            'add': (RTM_NEWQDISC, 'create'),
+            'del': (RTM_DELQDISC, 'req'),
+            'remove': (RTM_DELQDISC, 'req'),
+            'delete': (RTM_DELQDISC, 'req'),
+            'change': (RTM_NEWQDISC, 'change'),
+            'replace': (RTM_NEWQDISC, 'replace'),
+            'add-class': (RTM_NEWTCLASS, 'create'),
+            'del-class': (RTM_DELTCLASS, 'req'),
+            'change-class': (RTM_NEWTCLASS, 'change'),
+            'replace-class': (RTM_NEWTCLASS, 'replace'),
+            'add-filter': (RTM_NEWTFILTER, 'create'),
+            'del-filter': (RTM_DELTFILTER, 'req'),
+            'change-filter': (RTM_NEWTFILTER, 'change'),
+            'replace-filter': (RTM_NEWTFILTER, 'replace'),
         }
-        if isinstance(command, int):
-            command = (command, flags_make)
         if command == 'del':
             if index == 0:
                 index = [
@@ -1828,7 +1896,7 @@ class RTNL_API:
                 ]
             if isinstance(index, (list, tuple, set)):
                 return list(chain(*(self.tc('del', index=x) for x in index)))
-        command, flags = commands.get(command, command)
+        command, flags = self.make_request_type(command, command_map)
         msg = tcmsg()
         # transform handle, parent and target, if needed:
         handle = transform_handle(handle)
@@ -2099,6 +2167,23 @@ class RTNL_API:
                 },
             )
 
+        Create SEG6LOCAL tunnel End.DT46 action (kernel >= 5.14)::
+
+            # $ sudo modprobe vrf
+            # $ sudo sysctl -w net.vrf.strict_mode=1
+
+            ip.link('add',
+                    ifname='vrf-foo',
+                    kind='vrf',
+                    vrf_table=10)
+
+            ip.route('add',
+                     dst='2001:0:0:10::2/128',
+                     oif=idx,
+                     encap={'type': 'seg6local',
+                            'action': 'End.DT46',
+                            'vrf_table': 10})
+
         Create SEG6LOCAL tunnel End.B6 action (kernel >= 4.14)::
 
             ipr.route(
@@ -2147,18 +2232,7 @@ class RTNL_API:
 
         Dump all routes.
         '''
-        # 8<----------------------------------------------------
-        # FIXME
-        # flags should be moved to some more general place
-        flags_dump = NLM_F_DUMP | NLM_F_REQUEST
-        flags_base = NLM_F_REQUEST | NLM_F_ACK
-        flags_make = flags_base | NLM_F_CREATE | NLM_F_EXCL
-        flags_change = flags_base | NLM_F_REPLACE
-        flags_replace = flags_change | NLM_F_CREATE
-        flags_append = flags_base | NLM_F_CREATE | NLM_F_APPEND
-        # 8<----------------------------------------------------
         # transform kwarg
-
         if command in ('add', 'set', 'replace', 'change', 'append'):
             kwarg['proto'] = kwarg.get('proto', 'static') or 'static'
             kwarg['type'] = kwarg.get('type', 'unicast') or 'unicast'
@@ -2175,20 +2249,20 @@ class RTNL_API:
         )
         kwarg = request
 
-        commands = {
-            'add': (RTM_NEWROUTE, flags_make),
-            'set': (RTM_NEWROUTE, flags_replace),
-            'replace': (RTM_NEWROUTE, flags_replace),
-            'change': (RTM_NEWROUTE, flags_change),
-            'append': (RTM_NEWROUTE, flags_append),
-            'del': (RTM_DELROUTE, flags_base),
-            'remove': (RTM_DELROUTE, flags_base),
-            'delete': (RTM_DELROUTE, flags_base),
-            'get': (RTM_GETROUTE, NLM_F_REQUEST),
-            'show': (RTM_GETROUTE, flags_dump),
-            'dump': (RTM_GETROUTE, flags_dump),
+        command_map = {
+            'add': (RTM_NEWROUTE, 'create'),
+            'set': (RTM_NEWROUTE, 'replace'),
+            'replace': (RTM_NEWROUTE, 'replace'),
+            'change': (RTM_NEWROUTE, 'change'),
+            'append': (RTM_NEWROUTE, 'append'),
+            'del': (RTM_DELROUTE, 'req'),
+            'remove': (RTM_DELROUTE, 'req'),
+            'delete': (RTM_DELROUTE, 'req'),
+            'get': (RTM_GETROUTE, 'get'),
+            'show': (RTM_GETROUTE, 'dump'),
+            'dump': (RTM_GETROUTE, 'dump'),
         }
-        (command, flags) = commands.get(command, command)
+        (command, flags) = self.make_request_type(command, command_map)
         msg = rtmsg()
 
         # table is mandatory without strict_check; by default == 254
@@ -2246,7 +2320,7 @@ class RTNL_API:
                 )
             ret = self.filter_messages(match, ret)
 
-        if not (command == RTM_GETROUTE and self.nlm_generator):
+        if self.nlm_generator and not flags & NLM_F_DUMP == NLM_F_DUMP:
             ret = tuple(ret)
 
         return ret
@@ -2324,10 +2398,6 @@ class RTNL_API:
         if command == 'set':
             return
 
-        flags_base = NLM_F_REQUEST | NLM_F_ACK
-        flags_make = flags_base | NLM_F_CREATE | NLM_F_EXCL
-        flags_dump = NLM_F_REQUEST | NLM_F_ROOT | NLM_F_ATOMIC
-
         if 'match' not in kwarg and command == 'dump':
             match = kwarg
         else:
@@ -2339,16 +2409,14 @@ class RTNL_API:
             .finalize()
         )
 
-        commands = {
-            'add': (RTM_NEWRULE, flags_make),
-            'del': (RTM_DELRULE, flags_base),
-            'remove': (RTM_DELRULE, flags_base),
-            'delete': (RTM_DELRULE, flags_base),
-            'dump': (RTM_GETRULE, flags_dump),
+        command_map = {
+            'add': (RTM_NEWRULE, 'create'),
+            'del': (RTM_DELRULE, 'req'),
+            'remove': (RTM_DELRULE, 'req'),
+            'delete': (RTM_DELRULE, 'req'),
+            'dump': (RTM_GETRULE, 'dump'),
         }
-        if isinstance(command, int):
-            command = (command, flags_make)
-        command, flags = commands.get(command, command)
+        command, flags = self.make_request_type(command, command_map)
 
         msg = fibmsg()
         table = request.get('table', 0)
@@ -2377,7 +2445,7 @@ class RTNL_API:
                 )
             ret = self.filter_messages(match, ret)
 
-        if not (command == RTM_GETRULE and self.nlm_generator):
+        if self.nlm_generator and not flags & NLM_F_DUMP == NLM_F_DUMP:
             ret = tuple(ret)
 
         return ret
@@ -2391,11 +2459,11 @@ class RTNL_API:
         else:
             match = kwarg.pop('match', None)
 
-        commands = {
-            'dump': (RTM_GETSTATS, NLM_F_REQUEST | NLM_F_DUMP),
-            'get': (RTM_GETSTATS, NLM_F_REQUEST | NLM_F_ACK),
+        command_map = {
+            'dump': (RTM_GETSTATS, 'dump'),
+            'get': (RTM_GETSTATS, 'get'),
         }
-        command, flags = commands.get(command, command)
+        command, flags = self.make_request_type(command, command_map)
 
         msg = ifstatsmsg()
         msg['filter_mask'] = kwarg.get('filter_mask', 31)
@@ -2405,7 +2473,7 @@ class RTNL_API:
         if match is not None:
             ret = self.filter_messages(match, ret)
 
-        if not (command == RTM_GETSTATS and self.nlm_generator):
+        if self.nlm_generator and not flags & NLM_F_DUMP == NLM_F_DUMP:
             ret = tuple(ret)
 
         return ret

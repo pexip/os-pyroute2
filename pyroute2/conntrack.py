@@ -3,14 +3,13 @@ import socket
 from pyroute2.netlink.nfnetlink.nfctsocket import (
     IP_CT_TCP_FLAG_TO_NAME,
     IPSBIT_TO_NAME,
-    TCPF_TO_NAME,
+    TCP_CONNTRACK_TO_NAME,
     NFCTAttrTuple,
     NFCTSocket,
 )
 
 
 class NFCTATcpProtoInfo(object):
-
     __slots__ = (
         'state',
         'wscale_orig',
@@ -34,9 +33,7 @@ class NFCTATcpProtoInfo(object):
         self.flags_reply = flags_reply
 
     def state_name(self):
-        return ','.join(
-            [name for bit, name in TCPF_TO_NAME.items() if self.state & bit]
-        )
+        return TCP_CONNTRACK_TO_NAME.get(self.state, "UNKNOWN")
 
     def flags_name(self, flags):
         if flags is None:
@@ -66,7 +63,6 @@ class NFCTATcpProtoInfo(object):
 
 
 class ConntrackEntry(object):
-
     __slots__ = (
         'tuple_orig',
         'tuple_reply',
@@ -211,7 +207,6 @@ class Conntrack(NFCTSocket):
             tuple_orig=tuple_orig,
             tuple_reply=tuple_reply,
         ):
-
             if tuple_orig is not None and not tuple_orig.nla_eq(
                 ndmsg['nfgen_family'], ndmsg.get_attr('CTA_TUPLE_ORIG')
             ):

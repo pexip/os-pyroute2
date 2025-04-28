@@ -1,14 +1,77 @@
 '''
+
+.. testsetup::
+
+    from pyroute2 import IPMock as IPRoute
+    from pyroute2 import NDB
+    from pyroute2 import config
+
+    config.mock_iproute = True
+
+
+.. testsetup:: preset_1
+
+    from pyroute2 import NDB
+    from pyroute2 import config
+
+    config.mock_iproute = True
+    ndb = NDB(
+        sources=[
+            {'target': 'localhost', 'kind': 'IPMock'},
+            {'target': 'worker1.sample.com', 'kind': 'IPMock'},
+            {'target': 'worker2.sample.com', 'kind': 'IPMock'},
+        ]
+    )
+
+.. testsetup:: preset_br0_1
+
+    from pyroute2 import NDB
+    from pyroute2 import config
+    config.mock_iproute = True
+    ndb = NDB()
+    ndb.interfaces.create(ifname='eth1', kind='dummy').commit()
+    ndb.interfaces.create(ifname='br0', kind='bridge').commit()
+    ndb.interfaces.create(ifname='bond0', kind='bond').commit()
+
+.. testsetup:: preset_br0_2
+
+    from pyroute2 import NDB
+    from pyroute2 import config
+    config.mock_iproute = True
+    ndb = NDB()
+    ndb.interfaces.create(ifname='br0', kind='bridge').commit()
+    ndb.interfaces['br0'].add_port('eth0').commit()
+
+
 List interfaces
 ===============
 
-List interface keys::
+List interface keys:
+
+.. testcode::
 
     with NDB(log='on') as ndb:
         for key in ndb.interfaces:
             print(key)
 
-NDB views support some dict methods: `items()`, `values()`, `keys()`::
+
+.. testoutput::
+    :hide:
+
+    ('localhost', 0, 0, 772, 1, 1, 0, '00:00:00:00:00:00', \
+'00:00:00:00:00:00', 'lo', 65536, None, 'noqueue', None, 1000, 'UNKNOWN', 0, \
+None, None, None, 0, None, 0, 1, 1, 1, 0, None, None, 0, 65535, 65536, None, \
+None, None, 0, 0, None, None, None, None, None, None, 65536, None, None, \
+'up', None, None, None, None, None, None, None, None, '[]')
+    ('localhost', 0, 0, 772, 2, 1, 0, '52:54:00:72:58:b2', \
+'ff:ff:ff:ff:ff:ff', 'eth0', 1500, None, 'fq_codel', None, 1000, 'UNKNOWN', \
+0, None, None, None, 0, None, 0, 1, 1, 1, 0, None, None, 0, 65535, 65536, \
+None, None, None, 0, 0, None, None, None, None, None, None, 65536, None, \
+None, 'up', None, None, None, None, None, None, None, None, '[]')
+
+NDB views support some dict methods: `items()`, `values()`, `keys()`:
+
+.. testcode::
 
     with NDB(log='on') as ndb:
         for key, nic in ndb.interfaces.items():
@@ -18,28 +81,44 @@ NDB views support some dict methods: `items()`, `values()`, `keys()`::
 Get interface objects
 =====================
 
-The keys may be used as selectors to get interface objects::
+The keys may be used as selectors to get interface objects:
 
-    for key in ndb.interfaces:
-        print(ndb.interfaces[key])
+.. testcode::
+
+    with NDB() as ndb:
+        for key in ndb.interfaces:
+            print(ndb.interfaces[key])
+
+.. testoutput::
+    :hide:
+    :options: +ELLIPSIS
+
+    ...
 
 Also possible selector formats are `dict()` and simple string. The latter
-means the interface name::
+means the interface name:
+
+.. testcode:: preset_1
 
     eth0 = ndb.interfaces['eth0']
 
-Dict selectors are necessary to get interfaces by other properties::
+Dict selectors are necessary to get interfaces by other properties:
+
+
+.. testcode:: preset_1
 
     wrk1_eth0 = ndb.interfaces[{'target': 'worker1.sample.com',
                                 'ifname': 'eth0'}]
 
     wrk2_eth0 = ndb.interfaces[{'target': 'worker2.sample.com',
-                                'address': '52:54:00:22:a1:b7'}]
+                                'address': '52:54:00:72:58:b2'}]
 
 Change nic properties
 =====================
 
-Changing MTU and MAC address::
+Changing MTU and MAC address:
+
+.. testcode:: preset_1
 
     with ndb.interfaces['eth0'] as eth0:
         eth0['mtu'] = 1248
@@ -47,104 +126,68 @@ Changing MTU and MAC address::
     # --> <-- eth0.commit() is called by the context manager
 
 One can change a property either using the assignment statement, or
-using the `.set()` routine::
+using the `.set()` routine:
+
+.. testcode:: preset_1
 
     # same code
     with ndb.interfaces['eth0'] as eth0:
         eth0.set('mtu', 1248)
         eth0.set('address', '00:11:22:33:44:55')
 
-The `.set()` routine returns the object itself, that makes possible
-chain calls::
-
-    # same as above
-    with ndb.interfaces['eth0'] as eth0:
-        eth0.set('mtu', 1248).set('address', '00:11:22:33:44:55')
-
-    # or
-    with ndb.interfaces['eth0'] as eth0:
-        (eth0
-         .set('mtu', 1248)
-         .set('address', '00:11:22:33:44:55'))
-
-    # or without the context manager, call commit() explicitly
-    (ndb
-     .interfaces['eth0']
-     .set('mtu', 1248)
-     .set('address', '00:11:22:33:44:55')
-     .commit())
 
 Create virtual interfaces
 =========================
 
-Create a bridge and add a port, `eth0`::
+Create a bridge and add a port, `eth0`:
 
-    (ndb
-     .interfaces
-     .create(ifname='br0', kind='bridge')
-     .commit())
+.. testcode:: preset_1
 
-    (ndb
-     .interfaces['eth0']
-     .set('master', ndb.interfaces['br0']['index'])
-     .commit())
+    with ndb.interfaces.create(ifname='br0', kind='bridge') as br0:
+        br0.add_port('eth0')
 
 Bridge and bond ports
 =====================
 
 Add bridge and bond ports one can use specific API:
 
-.. code-block:: python
+.. testcode:: preset_br0_1
 
-    (
-        ndb.interfaces['br0']
-        .add_port('eth0')
-        .add_port('eth1')
-        .set('br_max_age', 1024)
-        .set('br_forward_delay', 1500)
-        .commit()
-    )
+    with ndb.interfaces['br0'] as br0:
+        br0.add_port('eth0')
+        br0.add_port('eth1')
+        br0.set('br_max_age', 1024)
+        br0.set('br_forward_delay', 1500)
 
-    (
-        ndb.interfaces['bond0']
-        .add_port('eth0')
-        .add_port('eth1')
-        .commit()
-    )
+    with ndb.interfaces['bond0'] as bond0:
+        bond0.add_port('eth0')
+        bond0.add_port('eth1')
 
 To remove a port:
 
-.. code-block:: python
+.. testcode:: preset_br0_2
 
-    (
-        ndb.interfaces['br0']
-        .del_port('eth0')
-        .commit()
-    )
+    with ndb.interfaces['br0'] as br0:
+        br0.del_port('eth0')
 
 Or by setting the master property on a port, in the same
 way as with `IPRoute`:
 
-.. code-block:: python
+.. testcode:: preset_br0_1
 
     index = ndb.interfaces['br0']['index']
 
     # add a port to a bridge
-    (
-        ndb.interfaces['eth0']
-        .set('master', index)
-        .commit()
-    )
+    with ndb.interfaces['eth0'] as eth0:
+        eth0.set('master', index)
 
     # remove a port from a bridge
-    (
-        ndb.interfaces['eth0']
-        .set('master', 0)
-        .commit()
-    )
+    with ndb.interfaces['eth0'] as eth0:
+        eth0.set('master', 0)
 '''
 
 import errno
+import json
 import traceback
 
 from pyroute2.common import basestring
@@ -175,6 +218,15 @@ def load_ifinfmsg(schema, target, event):
     #
     if event.get_attr('IFLA_WIRELESS'):
         return
+    #
+    # IFLA_PROP_LIST, IFLA_ALT_IFNAME
+    #
+    prop_list = event.get('IFLA_PROP_LIST')
+    event['alt_ifname_list'] = []
+    if prop_list is not None:
+        for ifname in prop_list.altnames():
+            event['alt_ifname_list'].append(ifname)
+
     #
     # AF_BRIDGE events
     #
@@ -231,10 +283,12 @@ def load_ifinfmsg(schema, target, event):
                 ifname = event.get_attr('IFLA_IFNAME')
                 # for veth interfaces, IFLA_LINK points to
                 # the peer -- but NOT in automatic updates
-                if (not link) and (target in schema.ndb.sources.keys()):
+                if (not link) and (
+                    (target,) in schema.fetch('SELECT f_target FROM SOURCES')
+                ):
                     schema.log.debug('reload veth %s' % event['index'])
                     try:
-                        update = schema.ndb.sources[target].api(
+                        update = schema.sources[target].api(
                             'link', 'get', index=event['index']
                         )
                         update = tuple(update)[0]
@@ -255,7 +309,9 @@ def load_ifinfmsg(schema, target, event):
 
 ip_tunnels = ('gre', 'gretap', 'ip6gre', 'ip6gretap', 'ip6tnl', 'sit', 'ipip')
 
-schema_ifinfmsg = ifinfmsg.sql_schema().unique_index('index')
+schema_ifinfmsg = (
+    ifinfmsg.sql_schema().push('alt_ifname_list', 'TEXT').unique_index('index')
+)
 
 schema_brinfmsg = (
     ifinfmsg.sql_schema()
@@ -329,7 +385,7 @@ supported_ifinfo = {x: ifinfmsg.ifinfo.data_map[x] for x in ifinfo_names}
 #
 # load supported ifinfo
 #
-for (name, data) in supported_ifinfo.items():
+for name, data in supported_ifinfo.items():
     name = 'ifinfo_%s' % name
     init['classes'].append([name, data])
     schema = (
@@ -355,7 +411,6 @@ def _cmp_master(self, value):
 
 
 class Vlan(RTNL_Object):
-
     table = 'af_bridge_vlans'
     msg_class = ifinfmsg.af_spec_bridge.vlan_info
     api = 'vlan_filter'
@@ -363,13 +418,13 @@ class Vlan(RTNL_Object):
     @classmethod
     def _count(cls, view):
         if view.chain:
-            return view.ndb.schema.fetchone(
+            return view.ndb.task_manager.db_fetchone(
                 'SELECT count(*) FROM %s WHERE f_index = %s'
                 % (view.table, view.ndb.schema.plch),
                 [view.chain['index']],
             )
         else:
-            return view.ndb.schema.fetchone(
+            return view.ndb.task_manager.db_fetchone(
                 'SELECT count(*) FROM %s' % view.table
             )
 
@@ -407,7 +462,7 @@ class Vlan(RTNL_Object):
               '''
         yield ('target', 'tflags', 'vid', 'ifname')
         where, values = cls._dump_where(view)
-        for record in view.ndb.schema.fetch(req + where, values):
+        for record in view.ndb.task_manager.db_fetch(req + where, values):
             yield record
 
     @staticmethod
@@ -441,25 +496,27 @@ class Vlan(RTNL_Object):
 
 
 class Interface(RTNL_Object):
-
     table = 'interfaces'
     msg_class = ifinfmsg
     api = 'link'
     key_extra_fields = ['IFLA_IFNAME']
     resolve_fields = ['vxlan_link', 'link', 'master']
     fields_cmp = {'master': _cmp_master}
+    fields_load_transform = {
+        'alt_ifname_list': lambda x: list(json.loads(x or '[]'))
+    }
     field_filter = LinkFieldFilter
 
     @classmethod
     def _count(cls, view):
         if view.chain:
-            return view.ndb.schema.fetchone(
+            return view.ndb.task_manager.db_fetchone(
                 'SELECT count(*) FROM %s WHERE f_IFLA_MASTER = %s'
                 % (view.table, view.ndb.schema.plch),
                 [view.chain['index']],
             )
         else:
-            return view.ndb.schema.fetchone(
+            return view.ndb.task_manager.db_fetchone(
                 'SELECT count(*) FROM %s' % view.table
             )
 
@@ -501,7 +558,7 @@ class Interface(RTNL_Object):
             'kind',
         )
         where, values = cls._dump_where(view)
-        for record in view.ndb.schema.fetch(req + where, values):
+        for record in view.ndb.task_manager.db_fetch(req + where, values):
             yield record
 
     def mark_tflags(self, mark):
@@ -519,6 +576,8 @@ class Interface(RTNL_Object):
     def __init__(self, *argv, **kwarg):
         kwarg['iclass'] = ifinfmsg
         self.event_map = {ifinfmsg: "load_rtnlmsg"}
+        self._alt_ifname_orig = set()
+        dict.__setitem__(self, 'alt_ifname_list', list())
         dict.__setitem__(self, 'state', 'unknown')
         warnings = []
         if isinstance(argv[1], dict):
@@ -632,9 +691,11 @@ class Interface(RTNL_Object):
             if isinstance(spec, basestring):
                 specs = [spec]
             elif callable(spec):
-                specs = self.ipaddr.dump().filter(spec)
+                specs = self.ipaddr.dump()
+                specs.select_records(spec)
             else:
-                specs = self.ipaddr.dump().filter(**spec)
+                specs = self.ipaddr.dump()
+                specs.select_records(**spec)
             for sp in specs:
                 try:
                     method = getattr(self.neighbours.locate(sp).remove(), mode)
@@ -675,9 +736,11 @@ class Interface(RTNL_Object):
             if isinstance(spec, basestring):
                 specs = [spec]
             elif callable(spec):
-                specs = self.ipaddr.dump().filter(spec)
+                specs = self.ipaddr.dump()
+                specs.select_records(spec)
             else:
-                specs = self.ipaddr.dump().filter(**spec)
+                specs = self.ipaddr.dump()
+                specs.select_records(**spec)
             for sp in specs:
                 try:
                     method = getattr(self.ipaddr.locate(sp).remove(), mode)
@@ -699,7 +762,8 @@ class Interface(RTNL_Object):
         def do_add_port(self, mode, spec):
             try:
                 port = self.view[spec]
-                assert port['target'] == self['target']
+                if port['target'] != self['target']:
+                    raise ValueError('target must be the same')
                 port['master'] = self['index']
                 getattr(port, mode)()
                 return [port]
@@ -715,8 +779,10 @@ class Interface(RTNL_Object):
         def do_del_port(self, mode, spec):
             try:
                 port = self.view[spec]
-                assert port['master'] == self['index']
-                assert port['target'] == self['target']
+                if port['master'] != self['index']:
+                    raise ValueError('wrong port master index')
+                if port['target'] != self['target']:
+                    raise ValueError('target must be the same')
                 port['master'] = 0
                 getattr(port, mode)()
                 return [port]
@@ -726,6 +792,18 @@ class Interface(RTNL_Object):
 
         self._apply_script.append((do_del_port, {'spec': spec}))
         return self
+
+    @check_auth('obj:modify')
+    def add_altname(self, ifname):
+        new_list = set(self['alt_ifname_list'])
+        new_list.add(ifname)
+        self['alt_ifname_list'] = list(new_list)
+
+    @check_auth('obj:modify')
+    def del_altname(self, ifname):
+        new_list = set(self['alt_ifname_list'])
+        new_list.remove(ifname)
+        self['alt_ifname_list'] = list(new_list)
 
     @check_auth('obj:modify')
     def __setitem__(self, key, value):
@@ -850,14 +928,44 @@ class Interface(RTNL_Object):
         return req
 
     @check_auth('obj:modify')
+    def apply_altnames(self, alt_ifname_setup):
+        alt_ifname_remove = set(self['alt_ifname_list']) - alt_ifname_setup
+        alt_ifname_add = alt_ifname_setup - set(self['alt_ifname_list'])
+        for ifname in alt_ifname_remove:
+            self.sources[self['target']].api(
+                'link', 'property_del', index=self['index'], altname=ifname
+            )
+        for ifname in alt_ifname_add:
+            self.sources[self['target']].api(
+                'link', 'property_add', index=self['index'], altname=ifname
+            )
+        self.load_from_system()
+        self.load_sql(set_state=False)
+        if set(self['alt_ifname_list']) != alt_ifname_setup:
+            raise Exception('could not setup alt ifnames')
+
+    @check_auth('obj:modify')
     def apply(self, rollback=False, req_filter=None, mode='apply'):
         # translate string link references into numbers
         for key in ('link', 'master'):
             if key in self and isinstance(self[key], basestring):
                 self[key] = self.ndb.interfaces[self[key]]['index']
         setns = self.state.get() == 'setns'
+        remove = self.state.get() == 'remove'
+        alt_ifname_setup = set(self['alt_ifname_list'])
+        if 'alt_ifname_list' in self.changed:
+            self.changed.remove('alt_ifname_list')
         try:
             super(Interface, self).apply(rollback, req_filter, mode)
+            if setns:
+                self.load_value('target', self['net_ns_fd'])
+                dict.__setitem__(self, 'net_ns_fd', None)
+                spec = self.load_sql()
+                if spec:
+                    self.state.set('system')
+            if not remove:
+                self.apply_altnames(alt_ifname_setup)
+
         except NetlinkError as e:
             if (
                 e.code == 95
@@ -902,12 +1010,16 @@ class Interface(RTNL_Object):
                 self.apply(rollback, req_filter, mode)
             else:
                 raise
-        if setns:
-            self.load_value('target', self['net_ns_fd'])
-            dict.__setitem__(self, 'net_ns_fd', None)
-            spec = self.load_sql()
-            if spec:
-                self.state.set('system')
+        if ('net_ns_fd' in self.get('peer', {})) and (
+            self['peer']['net_ns_fd'] in self.view.ndb.sources
+        ):
+            # wait for the peer in net_ns_fd, only if the netns
+            # is connected to the NDB instance
+            self.view.wait(
+                target=self['peer']['net_ns_fd'],
+                ifname=self['peer']['ifname'],
+                timeout=5,
+            )
         return self
 
     def hook_apply(self, method, **spec):
@@ -954,7 +1066,7 @@ class Interface(RTNL_Object):
             tname = 'ifinfo_%s' % self['kind']
             if tname in self.schema.compiled:
                 names = self.schema.compiled[tname]['norm_names']
-                spec = self.ndb.schema.fetchone(
+                spec = self.ndb.task_manager.db_fetchone(
                     'SELECT * from %s WHERE f_index = %s'
                     % (tname, self.schema.plch),
                     (self['index'],),
