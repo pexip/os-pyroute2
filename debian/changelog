@@ -1,3 +1,9 @@
+pyroute2 (0.7.7-4+pexip25u1) pexip-trixie; urgency=medium
+
+  * Initial trixie build
+
+ -- Mark Hymers <mark.hymers@pexip.com>  Tue, 29 Apr 2025 22:51:32 +0100
+
 pyroute2 (0.7.7-4) unstable; urgency=medium
 
   [ Nicolas Schier ]
