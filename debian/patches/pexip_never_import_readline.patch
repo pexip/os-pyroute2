@@ -1,3 +1,5 @@
+Always avoid using readline due to its licence
+
 Index: pyroute2/pyroute2/cli/console.py
 ===================================================================
 --- pyroute2.orig/pyroute2/cli/console.py
