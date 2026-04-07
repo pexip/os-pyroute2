@@ -1,3 +1,5 @@
+Remove unnecessary importlib-metadata dependency
+
 Index: pyroute2/setup.cfg
 ===================================================================
 --- pyroute2.orig/setup.cfg
